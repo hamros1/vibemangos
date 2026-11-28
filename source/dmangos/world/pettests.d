@@ -351,6 +351,14 @@ unittest
         session.petGainsKillXp(KillValue(3));
         assert(pet.values.get!UNIT_FIELD_PETEXPERIENCE == before + killGain(3, KillValue(3)));
         assert(killGain(3, KillValue(3)) != killGain(10, KillValue(3)));
+        // A kill shared from another node: the pet's part by the member's share (half of it here).
+        import dmangos.cluster.protocol : KillShare;
+        import dmangos.world.experience : withPetValue;
+        KillShare share = {target: session.character.guid, victim: 1, entry: 0, level: 3};
+        share.withPetValue(KillValue(3), 0.5f, false);
+        const had = pet.values.get!UNIT_FIELD_PETEXPERIENCE;
+        session.killShared(share);
+        assert(pet.values.get!UNIT_FIELD_PETEXPERIENCE == had + cast(uint) imported!"std.math".round(killGain(3, KillValue(3)) * 0.5f));
     }
     (cast() session.character).data.level = 1;
 

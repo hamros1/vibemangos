@@ -85,6 +85,20 @@ struct KillValue
 }
 
 /**
+ * `share`, a kill shared with a player on another node, carries what the kill of `value` is worth to the player's
+ * hunter pet: of the pet's level, by `petShare` (`halved`: a group whose highest member is grey to it).
+ */
+void withPetValue(ref imported!"dmangos.cluster.protocol".KillShare share, const KillValue value, float petShare,
+    bool halved) pure nothrow @nogc @safe
+{
+    share.elite = value.elite;
+    share.place = value.place;
+    share.multiplier = value.multiplier;
+    share.petShare = value.noXp ? 0 : petShare;
+    share.petHalved = halved;
+}
+
+/**
  * What an elite is worth against a normal creature: double (Wowpedia "Mob experience": "Elite XP = 2 * XP"),
  * two and a half in a five-player instance (the same page: "Mobs in 5-man instances give slightly more XP",
  * "elites in instances give 2.5 * XP when solo-ed"). Raids: double, no source found (docs/FORMULAS.md).

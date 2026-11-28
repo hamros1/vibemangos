@@ -26,7 +26,7 @@ import dmangos.serialization : deserialize, LengthPrefix, serialize;
 @safe: // the compiler checks every function here
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 130; // a creature's swing at a remote unit says whether it is its off hand, and whether it dual wields
+enum ushort protocolVersion = 131; // a creature kill's share says what its experience is worth to the member's pet
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -1031,6 +1031,12 @@ struct KillShare
     byte visualRank;
     bool honorless;
     bool forwarded;        /// the recipient's old node passed the credit to its new owner
+    // What the kill is worth to the recipient's hunter pet, of its own level (`KillValue`, `petGainsKillXp`):
+    bool elite;            /// the creature's rank neither normal nor rare
+    ubyte place;           /// `KillPlace`: the world, a dungeon, a raid
+    float multiplier = 1;  /// its `ExperienceMultiplier`
+    float petShare = 0;    /// the member's share of the kill (0: none for its pet)
+    bool petHalved;        /// a group whose highest member is grey to the kill: half and one
 }
 
 /**
@@ -1418,7 +1424,7 @@ private enum ulong protocolFingerprint = () {
 }();
 
 /// The protocol version whose messages `protocolFingerprint` was recorded for, and the fingerprint.
-private enum recordedVersion = 130, recordedFingerprint = 0xe481293cb2d660c4UL;
+private enum recordedVersion = 131, recordedFingerprint = 0x4b16007f868bbeb4UL;
 
 static assert(protocolVersion == recordedVersion && protocolFingerprint == recordedFingerprint,
     "the cluster messages (or protocolVersion) changed: if the messages changed, raise protocolVersion; then record "

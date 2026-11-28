@@ -635,7 +635,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
             return;
         }
         if (share.entry)
-            return player.killShared(share.entry, share.victim, share.level, share.xp, share.rate, share.reputationRate);
+            return player.killShared(share);
         if (share.victim && share.victim <= uint.max && share.victim != share.target)
             player.playerKilledByMe(HonorVictim(share.victim, share.level, share.race, share.rank, share.visualRank,
                 share.honorless, Position(share.x, share.y, share.z)), share.map, share.instance);

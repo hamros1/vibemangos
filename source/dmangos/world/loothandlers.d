@@ -789,8 +789,9 @@ private:
                 const owner = context.remoteKillRecipient(tapper, map);
                 if (owner.node)
                 {
-                    const share = KillShare(tapper, victim.guid, victim.template_.entry, value.level,
+                    auto share = KillShare(tapper, victim.guid, victim.template_.entry, value.level,
                         killGain(owner.level, value), 1, 1);
+                    share.withPetValue(value, 1, false);
                     context.killShareElsewhere(owner.node, share);
                 }
             }
@@ -888,19 +889,26 @@ private:
             {
                 KillShare share = {target: m.guid, victim: victim.guid, entry: entry, level: level, xp: m.xp,
                     rate: m.rate, reputationRate: m.reputationRate};
+                if (m.xp)
+                    share.withPetValue(value, m.share, highest !is highestNotGray);
                 context.killShareElsewhere(m.node, share);
             }
         }
     }
 
     /// Another node's kill, shared with this player in its group (`KillShare`).
-    package void killShared(uint entry, ulong victim, uint level, uint xp, float rate, float reputationRate)
+    package void killShared(const ref imported!"dmangos.cluster.protocol".KillShare share)
     {
-        killedMonster(entry, victim);
-        if (reputationRate > 0)
-            reputations.rewardKillReputation(entry, level, reputationRate);
-        if (xp)
-            giveXP(xp, victim, rate);
+        import dmangos.world.experience : KillPlace, KillValue;
+
+        killedMonster(share.entry, share.victim);
+        if (share.reputationRate > 0)
+            reputations.rewardKillReputation(share.entry, share.level, share.reputationRate);
+        if (share.petShare > 0) // its pet's, before it perhaps passes its pet's level
+            petGainsKillXp(KillValue(share.level, share.elite, cast(KillPlace) share.place, share.multiplier),
+                share.petShare, share.petHalved);
+        if (share.xp)
+            giveXP(share.xp, share.victim, share.rate);
         flushPlayerChanges();
     }
 
