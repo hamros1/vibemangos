@@ -644,6 +644,31 @@ unittest
     assert(a.cast_(17) == SpellCastResult.targetAuraState, "no shield while the soul is weak");
 }
 
+/// A dispel alone (Dispel Magic, Cleanse) is refused at someone with nothing of its kind on (CMaNGOS's classic
+/// `CheckCast`); with a magic aura on, it is cast. Not a dispel with another effect (Abolish Poison, Shield Slam).
+unittest
+{
+    auto a = new Arena(PlayerClass.priest);
+    enum uint dispelMagic = 96101, both = 96102, buff = 96103;
+    auto d = a.spell(dispelMagic, SpellEffect.dispel, ImplicitTarget.friend, 1);
+    d.miscValue[0] = 1; // magic
+    auto b = a.spell(both, SpellEffect.dispel, ImplicitTarget.friend, 1);
+    b.miscValue[0] = 4; // poison
+    b.effect[1] = SpellEffect.applyAura;
+    b.implicitTargetA[1] = ImplicitTarget.friend;
+    b.casting.applyAuraName[1] = AuraType.dummy;
+    b.casting.durationIndex = 1;
+    assert(a.cast_(dispelMagic) == SpellCastResult.nothingToDispel, "nothing to dispel");
+    assert(a.cast_(both) == SpellCastResult.ok, "a dispel with another effect: cast anyway");
+    auto shield = a.spell(buff, SpellEffect.applyAura, ImplicitTarget.friend);
+    a.auraEffect(shield, 0, AuraType.schoolAbsorb, ImplicitTarget.friend, 44, 127);
+    shield.casting.durationIndex = 1;
+    shield.casting.dispel = 1;
+    assert(a.cast_(buff) == SpellCastResult.ok && a.hasAura(buff));
+    a.tick(2000);
+    assert(a.cast_(dispelMagic) == SpellCastResult.ok, "something magic on");
+}
+
 /// Shield Slam (23922: its second effect's 225, family flags 0x102000000 as Bloodthirst's 0x2000000) adds the
 /// shield's block value.
 unittest

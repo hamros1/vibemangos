@@ -463,8 +463,8 @@ mixin template ClassSpells()
      * What the class rules refuse of `spell` at `targets`: a warrior's Overpower without the dodge (its caster aura
      * state, as the client calls it), Conflagrate without the caster's Immolate on the target, Hammer of Wrath at
      * a target over a fifth of its health, Swiftmend without a Rejuvenation or Regrowth to consume, Curse of Doom at
-     * a player, Power Infusion on someone under Arcane Power; a helpful spell its target is immune to (Power Word:
-     * Shield under Weakened Soul, a second Divine Shield under Forbearance).
+     * a player, Power Infusion on someone under Arcane Power; a dispel at someone with nothing to dispel; a helpful
+     * spell its target is immune to (Power Word: Shield under Weakened Soul, a second Divine Shield under Forbearance).
      */
     package SpellCastResult classCastCheck(const(SpellInfo)* spell, const ref SpellTargets targets)
     {
@@ -514,6 +514,20 @@ mixin template ClassSpells()
             if (auto set = aurasOf(target))
                 if (set.find(arcanePower) !is null)
                     return SpellCastResult.auraBounced;
+        // A dispel and nothing else (Dispel Magic, Cleanse, Remove Curse, Devour Magic; not Abolish Poison's, nor
+        // Shield Slam's) at someone with nothing of its kind on it (`CheckCast`, classic's: its first effect only).
+        if (spell.effect[0] == SpellEffect.dispel && spell.effect[1] == SpellEffect.none
+                && spell.effect[2] == SpellEffect.none && target)
+            if (auto set = aurasOf(target))
+            {
+                import std.algorithm.searching : any;
+
+                enum int dispelAll = 7;
+                const type = spell.miscValue[0];
+                const uint mask = type == dispelAll ? 0b11110 : type >= 0 && type < 32 ? 1u << type : 0;
+                if (!set.list.any!(a => (mask & (1u << a.spell.casting.dispel)) != 0))
+                    return SpellCastResult.nothingToDispel;
+            }
         // A helpful spell at someone immune to its mechanic (Weakened Soul, Forbearance: `IsImmuneToSpell`).
         if (target && !hostileTo(target) && spell.casting.mechanic
                 && target.fighter.immune.toMechanic(spell.casting.mechanic))
