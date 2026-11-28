@@ -275,6 +275,13 @@ mixin template CreatureCasting()
         return casting_ !is null || channelSpell !is null;
     }
 
+    /// Whether its cast, or its channel, is at `who` (its unit target).
+    package bool castingAt(ulong who) const
+    {
+        return (casting_ !is null && castTarget == who)
+            || (channelSpell !is null && me.values.get!UNIT_FIELD_CHANNEL_OBJECT == who);
+    }
+
     private const(SpellInfo)* channelSpell;
     private int channelTimer;
     private ulong namedChannelSequence;

@@ -174,8 +174,44 @@ mixin template EffectHandlers()
     }
 
     /**
-     * `SPELL_EFFECT_SANCTUARY` (Vanish, Divine Intervention): the target leaves every fight; Vanish frees its
-     * rogue of what roots it as well (CMaNGOS's `EffectSanctuary`).
+     * The enemies' casts at this player stop (CMaNGOS's `InterruptSpellsCastedOnMe`): within 100 yd, a creature's
+     * or a player's cast or channel at it; with `inFlight` (Vanish, Divine Intervention) a player's missiles on
+     * their way to it too.
+     */
+    package void interruptCastsAtMe(bool inFlight)
+    {
+        import dmangos.world.relations : canAttack;
+        import dmangos.world.spellcast : SpellCastResult;
+
+        enum float reach = 100;
+        const me = relatingNow();
+        foreach (creature; map.creaturesNear(player.position, reach))
+            if (creature.alive && creature.ai !is null && creature.ai.castingAt(player.guid)
+                    && canAttack(me, creature.ai.relatingOf, context.client))
+                creature.ai.interruptCast();
+        foreach (u; map.playersNear(player.position, reach))
+        {
+            auto other = u.session;
+            if (other is null || other is this || other.player is null || !canAttack(me, other.relatingNow(), context.client))
+                continue;
+            if (other.generic.active && other.generic.targets.unit == player.guid)
+                other.interruptCast(SpellCastResult.interrupted);
+            if (other.channelSpell !is null && other.channelTarget == player.guid)
+                other.endChannel(true);
+            if (inFlight)
+            {
+                import std.algorithm.iteration : filter;
+                import std.array : array;
+
+                other.pendingHits = other.pendingHits.filter!(h => h.target != player.guid).array;
+            }
+        }
+    }
+
+    /**
+     * `SPELL_EFFECT_SANCTUARY` (Vanish, Divine Intervention): the target leaves every fight, the enemies' spells
+     * at it stop, even those on their way; Vanish frees its rogue of what roots it as well (CMaNGOS's
+     * `EffectSanctuary`).
      */
     package void sanctuaryEffect(const(SpellInfo)* spell, size_t i, ulong target)
     {
@@ -184,6 +220,7 @@ mixin template EffectHandlers()
         auto who = playerHere(target);
         if (who is null)
             return;
+        who.interruptCastsAtMe(true);
         who.leaveAllFights();
         if (spell.casting.spellFamilyName == familyRogue && (spell.casting.spellFamilyFlags & vanish))
             foreach (aura; who.player.auras.list.dup)
@@ -197,6 +234,7 @@ mixin template EffectHandlers()
     {
         if (player is null)
             return;
+        interruptCastsAtMe(true);
         leaveAllFights();
     }
 
@@ -241,6 +279,7 @@ mixin template EffectHandlers()
             return;
         }
         feigningDeath = true;
+        interruptCastsAtMe(false); // (CMaNGOS's `HandleFeignDeath`: those on their way still land)
         leaveAllFights();
     }
 
@@ -1125,9 +1164,25 @@ unittest
     a.hero.write(Opcode.CMSG_ATTACKSWING, ClientGuid(a.keeper.guid));
     a.tick(10);
     assert(a.keeper.ai.inCombat && (a.me.values.get!UNIT_FIELD_FLAGS & UnitFlags.inCombat));
+    // The creature's cast at it under way: Vanish stops it (CMaNGOS's `InterruptSpellsCastedOnMe`).
+    {
+        import dmangos.dbc : buildDbc;
+        import dmangos.world.clientdata : spellCastTimesFormat;
+
+        a.context.client.spellCastTimes = typeof(a.context.client.spellCastTimes).parse(buildDbc(spellCastTimesFormat,
+            [[1u, 0, 0, 0], [2u, 3000, 0, 3000]]), "SpellCastTimes.dbc");
+        enum uint bolt = 96037;
+        auto b = a.spell(bolt, SpellEffect.schoolDamage, ImplicitTarget.unit, 10);
+        b.casting.castingTimeIndex = 2;
+        b.casting.interruptFlags = 0x0F;
+        b.casting.preventionType = 1;
+        assert(a.keeper.ai.castSpell(bolt in a.context.data.spells.spells, a.me.guid, 0));
+        assert(a.keeper.ai.castingAt(a.me.guid), "casting at the player");
+    }
     a.cast_(vanish);
     assert((a.me.guid in a.keeper.ai.threatList) is null && !(a.me.values.get!UNIT_FIELD_FLAGS & UnitFlags.inCombat));
     assert(session.attacking == 0, "it stopped attacking");
+    assert(!a.keeper.ai.castingNow, "its cast at the player stopped");
 
     // Fade: 100 threat less while it lasts, back after.
     auto s = a.spell(fade, SpellEffect.applyAura, ImplicitTarget.caster, -100);
