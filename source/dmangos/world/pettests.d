@@ -1419,6 +1419,88 @@ unittest
     assert(me.player.values.get!UNIT_FIELD_HEALTH < myHealth, "the bolt back at Rexxar");
 }
 
+/// A player's crit with Plagueheart's set bonus (`MOD_CRITICAL_THREAT`: "your critical strikes cause 25% less threat")
+/// adds a quarter less threat than the same damage not critical, as CMaNGOS's `ThreatManager::addThreat`.
+unittest
+{
+    import dmangos.world.auras : AuraType, makeAura;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.spellids : ImplicitTarget, SpellEffect;
+    import std.format : format;
+    import dmangos.world.unit : Blow, dealDamage;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    auto rexxar = loggedIn(context, db, 7, "Rexxar", Position(-8949.95f, -132.49f, 83.53f, 0), AccountLevel.player,
+        raceOrc);
+    rexxar.read();
+    addPetData(&rexxar, context);
+    auto me = rexxar.session.inWorld;
+    auto map = context.map(0);
+    enum uint plagueheart = 97909;
+    auto bonus = testSpell(plagueheart, SpellEffect.applyAura, ImplicitTarget.caster, -25);
+    bonus.casting.applyAuraName[0] = AuraType.modCriticalThreat;
+    bonus.miscValue[0] = 0x7F; // every school
+    context.data.spells.spells[plagueheart] = bonus;
+    me.addAura(makeAura(context.data.spells.spell(plagueheart), me.player.guid, 60, -1, true, [-25, 0, 0]));
+    uint threatOf(bool crit)
+    {
+        auto boar_ = context.summonCreature(map, boar, Position(-8945, -132.49f, 83.53f, 0), TempSpawnType.dead, 0, 0);
+        boar_.values.set!UNIT_FIELD_MAXHEALTH(100_000u);
+        boar_.values.set!UNIT_FIELD_HEALTH(100_000u);
+        dealDamage(me.unit, map.unitOf(boar_), 400, Blow.spell(4, crit));
+        return cast(uint) boar_.ai.threatOf(me.player.guid);
+    }
+    const plain = threatOf(false), critical = threatOf(true);
+    assert(plain == 400 && critical == 300, format!"a crit's threat a quarter less: %s, %s"(plain, critical));
+}
+
+/// A player's spell damage against a creature type (`MOD_FLAT_SPELL_DAMAGE_VERSUS`: the Holy Mightstone's against
+/// undead) is added to its spells at a creature of that type, before the percents (CMaNGOS's `SpellDamageBonusDone`).
+unittest
+{
+    import std.format : format;
+    import dmangos.world.auras : AuraType, makeAura;
+    import dmangos.world.spellcast : SpellTargets, TargetFlags, spellAttrEx3AlwaysHit;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.spellids : ImplicitTarget, SpellEffect;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    auto rexxar = loggedIn(context, db, 7, "Rexxar", Position(-8949.95f, -132.49f, 83.53f, 0), AccountLevel.player,
+        raceOrc);
+    rexxar.read();
+    addPetData(&rexxar, context);
+    auto me = rexxar.session.inWorld;
+    auto map = context.map(0);
+    enum uint bolt = 97910, mightstone = 97911;
+    auto spell = testSpell(bolt, SpellEffect.schoolDamage, ImplicitTarget.enemy, 30);
+    spell.casting.school = 2; // fire
+    spell.casting.attributesEx3 |= spellAttrEx3AlwaysHit;
+    context.data.spells.spells[bolt] = spell;
+    auto versus = testSpell(mightstone, SpellEffect.applyAura, ImplicitTarget.caster, 100);
+    versus.casting.applyAuraName[0] = AuraType.modFlatSpellDamageVersus;
+    versus.miscValue[0] = 1 << (context.data.creatureTemplates[boar].creatureType - 1); // the boar's type
+    context.data.spells.spells[mightstone] = versus;
+    uint struck()
+    {
+        auto boar_ = context.summonCreature(map, boar, Position(-8945, -132.49f, 83.53f, 0), TempSpawnType.dead, 0, 0);
+        boar_.values.set!UNIT_FIELD_MAXHEALTH(100_000u);
+        boar_.values.set!UNIT_FIELD_HEALTH(100_000u);
+        me.castSpell(context.data.spells.spell(bolt), SpellTargets(TargetFlags.unit, boar_.guid), true, 0);
+        return 100_000 - boar_.values.get!UNIT_FIELD_HEALTH;
+    }
+    const plain = struck();
+    me.addAura(makeAura(context.data.spells.spell(mightstone), me.player.guid, 60, -1, true, [100, 0, 0]));
+    const against = struck();
+    assert(plain >= 30 && plain <= 45, format!"the bolt alone: %s"(plain));
+    assert(against >= 130, format!"its bonus against the boar's type added: %s"(against));
+}
+
 /// A creature's spell at its friends around it (`TARGET_ENUM_UNITS_FRIEND_AOE_AT_SRC_LOC`: a Battle Command)
 /// reaches itself and the friend beside it, and not the player's pet there.
 unittest

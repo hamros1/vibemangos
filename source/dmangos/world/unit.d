@@ -602,6 +602,17 @@ private void creatureDamaged(UnitRef attacker, UnitRef victim, uint damage, cons
         if (!blow.threatIncludesCaster && attacker.kind == UnitKind.player && blow.school < 7)
             if (const p = attacker.session.character)
                 threat = p.damageMods.threat[blow.school];
+        // A crit's threat by its attacker's auras for the school (`MOD_CRITICAL_THREAT`: Plagueheart's "your
+        // critical strikes cause 25% less threat"), as CMaNGOS's `ThreatManager::addThreat`.
+        const crit = blow.kind == BlowKind.melee ? blow.melee.outcome == MeleeHitOutcome.crit : blow.crit;
+        if (crit && attacker.kind == UnitKind.player && blow.school < 7)
+            if (const p = attacker.session.character)
+            {
+                import dmangos.world.spellids : AuraType;
+
+                const school = blow.school;
+                threat *= p.auras.multiplier(AuraType.modCriticalThreat, (int mask) => (mask & (1 << school)) != 0);
+            }
         creature.ai.damageTaken(attacker, damage, threat * blow.threat);
     }
     else if (blow.remotePlayer && creature.ai !is null)
