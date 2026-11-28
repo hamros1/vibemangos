@@ -4,8 +4,8 @@
 blackwinglair.d: npcNefarian: not reviewed
 blackwinglair.d: npcVictorNefarius: not reviewed
 gnomeregan.d: t.entry: the troggs of a pack, of Grubbis's event: summoned again
-naxxramas.d: npcCryptGuard: not reviewed
-naxxramas.d: npcFalloutSlime: not reviewed
+naxxramas.d: npcCryptGuard: Anub'Rekhan's fight is not kept across a crash (no checkpoint of him): it starts over, his guards with it
+naxxramas.d: npcFalloutSlime: Grobbulus's fight is not kept across a crash: it starts over, his slimes with it
 naxxramas.d: npcGrobbulusCloud: a poison cloud of seconds
 naxxramas.d: npcSpiderling: Maexxna's spiderlings, weak and summoned again on her timer
 naxxramas.d: npcSpore: Loatheb's spores come every few seconds on his timer: a crash loses one at most
@@ -14,12 +14,12 @@ naxxramas.d: npcZombieChow: Gluth's zombie chow come every few seconds
 onyxia.d: npcOnyxiaWhelp: her whelps come in waves for as long as she flies
 ruinsofahnqiraj.d: npcHatchling: hatchlings of a broken egg, summoned again
 ruinsofahnqiraj.d: npcLarva: Ayamiss's larva, of seconds, for the one sacrificed
-ruinsofahnqiraj.d: npcManaFiend: not reviewed
-ruinsofahnqiraj.d: npcSandVortex: not reviewed
+ruinsofahnqiraj.d: npcManaFiend: Moam's fight is not kept across a crash: it starts over, his mana fiends with it
+ruinsofahnqiraj.d: npcSandVortex: Ossirian's fight is not kept across a crash: it starts over, his vortexes with it
 ruinsofahnqiraj.d: npcSwarmer: Ayamiss's swarmers, summoned again on her timer
 templeofahnqiraj.d: npcDirtMound: Ouro's mounds live 30 s, while he is down; a crash then loses those (not covered by aq40-ouro-recovery, which crashes after his rise)
 templeofahnqiraj.d: npcGlobOfViscidus: by design: after a crash Viscidus rises and the lost globs count as come back (aq40-viscidus-recovery)
 templeofahnqiraj.d: npcSkeram: Skeram's images: gone at his next split anyway
-templeofahnqiraj.d: npcSpawnOfFankriss: not reviewed
+templeofahnqiraj.d: npcSpawnOfFankriss: Fankriss's fight is not kept across a crash: it starts over, his spawn with it
 templeofahnqiraj.d: npcVeknissHatchling: hatchlings of an egg, summoned again
 zulfarrak.d: zf.random: Zum'rah's grave zombies, summoned again as graves open
