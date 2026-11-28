@@ -272,7 +272,8 @@ unittest
     w.now += 2.seconds;
     assert(w.castAt(priest, 589, hogger) == SpellCastResult.ok);
     priest.read();
-    me.player.values.set!UNIT_FIELD_HEALTH(100u);
+    // Hurt, to be healed, though not to be slain by Hogger meanwhile (his Rushing Charge's +40 damage a blow).
+    me.player.values.set!UNIT_FIELD_HEALTH(me.player.values.get!UNIT_FIELD_MAXHEALTH / 2);
     foreach (_; 0 .. 7)
         pass(w, priest, 1000.msecs);
     assert(spellLogs(priest, Opcode.SMSG_SPELLHEALLOG).canFind!(l => l[0] == 15290), "healed by its ticks");
