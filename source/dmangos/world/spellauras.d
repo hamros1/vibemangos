@@ -465,6 +465,8 @@ void periodicTick(ref Caster caster, imported!"dmangos.world.creature".Creature 
         break;
     case AuraType.periodicManaLeech:
         return manaLeechTick(caster, victim, aura, i, amount);
+    case AuraType.periodicHealthFunnel:
+        return funnelTick(caster, victim, aura, i, amount);
     case AuraType.periodicTriggerSpell:
         if (caster.kind == UnitKind.creature && caster.creature is target)
         {
@@ -525,6 +527,33 @@ void leechTick(ref Caster caster, UnitRef victim, Aura aura, size_t i, uint dama
         spellHeal(caster, aura.spell, caster.unit, cast(int)(dealt * caster.spellMod(SpellModOp.multipleValue, aura.spell,
             factor)), SpellHeal(true));
     caster.damageDealt(aura.spell, victim, false, damage, true); // a tick as any damage over time's: Nightfall
+}
+
+/**
+ * A tick of `caster`'s `SPELL_AURA_PERIODIC_HEALTH_FUNNEL` on `beneficiary` (Blood Siphon: a raider's blood into
+ * Hakkar): a leech the other way round, as CMaNGOS's tick has it. The caster takes the amount (logged as a periodic
+ * spell hit), and the aura's bearer is healed by what it took (at most the caster's health) times the effect's
+ * multiplier.
+ */
+void funnelTick(ref Caster caster, UnitRef beneficiary, Aura aura, size_t i, uint amount)
+{
+    import dmangos.world.spellcast : nonMeleeDamageLog;
+    import dmangos.world.spelldamage : SpellHeal, spellHeal;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.unit : Blow, dealDamage;
+
+    if (!beneficiary || !beneficiary.alive || !caster.alive || amount == 0)
+        return;
+    const school = aura.spell.casting.school;
+    auto victim = caster.unit;
+    const health = victim.health;
+    const dealt = amount < health ? amount : health;
+    caster.tellAround(victim.combatGuid, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, nonMeleeDamageLog(victim.combatGuid,
+        caster.guid, aura.spell.id, amount, school, 0, 0, true, 0, false));
+    dealDamage(victim, victim, dealt, Blow.periodic(school));
+    const factor = aura.spell.casting.multipleValue[i] > 0 ? aura.spell.casting.multipleValue[i] : 1.0f;
+    if (beneficiary.alive)
+        spellHeal(caster, aura.spell, beneficiary, cast(int)(dealt * factor), SpellHeal(true));
 }
 
 /**

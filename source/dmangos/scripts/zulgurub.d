@@ -1810,6 +1810,26 @@ unittest
 }
 
 /// Mandokir's gaze: its player is told; gaining threat on him while it lasts, they are charged when it ends.
+
+/**
+ * Hakkar's Blood Siphon (`spell_hakkar_blood_siphon`, 24324): each raider it reaches casts a siphon back at him
+ * (CMaNGOS's `BloodSiphon`): its blood into him (24322, a health funnel), or, poisoned by a Son of Hakkar's
+ * Poisonous Blood (24321), its poison (24323, damage over time to him).
+ */
+@spell("spell_hakkar_blood_siphon")
+struct HakkarBloodSiphon
+{
+    enum uint poisonousBlood = 24321, siphon = 24322, poisonedSiphon = 24323;
+
+    void on(ref SpellContext it, const ref EffectHit e)
+    {
+        if (e.effect != 0 || !e.target || e.target == e.caster)
+            return;
+        it.consume();
+        it.castSpell(e.target, it.hasAura(e.target, poisonousBlood) ? poisonedSiphon : siphon, e.caster, true);
+    }
+}
+
 unittest
 {
     import std.algorithm.searching : canFind;

@@ -482,8 +482,19 @@ mixin template CreatureScripting()
             if (caster.guid == me.guid)
                 return hostCast(spellId, target, triggered);
             if (world_ !is null)
+            {
                 if (auto other = world_.creatureAt(caster.guid))
                     return other.ai.castFor(world_, spellId, target.guid, triggered);
+                // A player its spell made cast one back (Blood Siphon's: the raider's blood into Hakkar), triggered.
+                auto unit = world_.unit(caster.guid);
+                if (unit.kind == imported!"dmangos.world.unit".UnitKind.player && triggered)
+                {
+                    if (!unit.alive)
+                        return ActionResult.notAllowed;
+                    unit.session.castTriggeredAt(spellId, target.guid);
+                    return ActionResult.ok;
+                }
+            }
             return ActionResult.notHere;
         }
         ActionResult hostDamage(EntityRef target, uint amount)

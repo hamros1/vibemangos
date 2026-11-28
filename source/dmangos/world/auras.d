@@ -959,7 +959,7 @@ package void enableAuraEffect(Aura aura, size_t i, int value)
         break;
     case AuraType.periodicDamage, AuraType.periodicHeal, AuraType.obsModHealth, AuraType.obsModMana,
             AuraType.periodicEnergize, AuraType.periodicTriggerSpell, AuraType.periodicLeech,
-            AuraType.periodicManaLeech:
+            AuraType.periodicManaLeech, AuraType.periodicHealthFunnel:
         break;
     default:
         period = 0;

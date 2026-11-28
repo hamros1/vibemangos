@@ -1310,6 +1310,31 @@ unittest
     assert(opcodesOf(a.hero.read()).canFind(Opcode.SMSG_PERIODICAURALOG));
 }
 
+/// A health funnel (Blood Siphon, 24322: a raider's blood into Hakkar): each tick its caster loses the amount, and
+/// the creature it is on is healed by as much (CMaNGOS's `PERIODIC_HEALTH_FUNNEL`, a leech the other way round).
+unittest
+{
+    import dmangos.world.auras : AuraType;
+    import dmangos.world.updatefields;
+
+    auto a = new Arena;
+    enum uint siphon = 96029;
+    auto s = a.spell(siphon, SpellEffect.applyAura, ImplicitTarget.enemy, 200);
+    s.casting.applyAuraName[0] = AuraType.periodicHealthFunnel;
+    s.casting.amplitude[0] = 1000;
+    s.casting.durationIndex = 1;
+    a.me.values.set!UNIT_FIELD_MAXHEALTH(5000u);
+    a.me.values.set!UNIT_FIELD_HEALTH(5000u);
+    a.keeper.values.set!UNIT_FIELD_HEALTH(1000u);
+    a.cast_(siphon, a.keeper.guid);
+    a.tick(1000);
+    const lost = 5000 - a.me.values.get!UNIT_FIELD_HEALTH;
+    const gained = cast(int) a.keeper.values.get!UNIT_FIELD_HEALTH - 1000;
+    import std.format : format;
+    // (Its innkeeper's swings may hurt it a little meanwhile.)
+    assert(lost >= 200 && gained == 200, format!"lost %s, gained %s"(lost, gained));
+}
+
 /// What auras show: tracking bits, Hunter's Mark's flag and its attack power for shots, Aspect of the Beast's
 /// untrackable flag, Bestial Wrath's size; all gone with them.
 unittest
