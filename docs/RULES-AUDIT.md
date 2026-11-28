@@ -276,7 +276,7 @@ risk.
 | spellhandlers.d:updateAutoRepeat | First shot after 500 ms; interval = ranged time + recovery; moving resets | Spell::update (autorepeat) | none found | M |
 | spellhandlers.d:critChanceOf / spellCritOf | Weapon abilities melee crit; spells spellCrit + mods | RollSpellCritOutcome | none found | M |
 | spellhandlers.d:weaponSpellDamage | First weapon effect deals; fixed × pct; block 0 | EffectWeaponDmg | none found | M |
-| spellhandlers.d:dispelEffect | Random auras of dispel type | EffectDispel | SpellCategories.DispelType | M |
+| spellhandlers.d:dispelEffect | Random auras of dispel type | EffectDispel | SpellCategories.DispelType | MM. **Checked 2026-11-28 against CMaNGOS** (`EffectDispel`, `ProcessDispelList`): the same (as many as the value, at random, of the dispel type; magic helpful from enemies, harmful from friends). Fixed: Shield Slam dispels only half the time (its tooltip's "50% chance"). Not done: CMaNGOS takes one stack of a stacked aura a dispel, here the whole aura; `SPELLMOD_RESIST_DISPEL_CHANCE` |
 | spellhandlers.d:areaTargets | 3D radius; cone ±60°; party spells subgroup | SetTargetMap | SpellTargetRestrictions.ConeDegrees (DB2) | M: cone hard-coded |
 | spellhandlers.d:chainTargets | Chain jumps within 10 yd; chain heal lowest HP% | SetTargetMap | SpellEffect.EffectChainTargets (count only) | M |
 | spellhandlers.d:addComboPoints | Max 5, reset on new target, spent unless missed | AddComboPoints | none found | MM. **Checked 2026-11-28 against CMaNGOS** (`Unit::AddComboPoints`): the same (retaining auras dropped, a new target starts over, 0 to 5) |

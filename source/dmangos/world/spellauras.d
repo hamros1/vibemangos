@@ -621,6 +621,12 @@ void dispel(ref Caster caster, const(SpellInfo)* spell, size_t i, UnitRef target
     enum uint dispelMagic = 1, dispelAll = 7;
     if (!target)
         return;
+    // Shield Slam: "a 50% chance of dispelling 1 magic effect on the target" (CMaNGOS's `EffectDispel`).
+    enum uint familyWarrior = 4;
+    enum ulong shieldSlam = 0x1_0000_0000;
+    if (spell.casting.spellFamilyName == familyWarrior && (spell.casting.spellFamilyFlags & shieldSlam)
+            && uniform(0, 2, caster.map.random) == 0)
+        return;
     auto auras = target.auraSet;
     if (auras is null)
         return;
