@@ -1,8 +1,5 @@
 # Creatures encounter scripts summon that are not kept across a crash (tools/harness/checkpoint-lint.py):
-# "file: entry: why". Those marked "not reviewed" were so when the lint came: whether each should be kept is
-# the encounter's to decide.
-blackwinglair.d: npcNefarian: not reviewed
-blackwinglair.d: npcVictorNefarius: not reviewed
+# "file: entry: why".
 gnomeregan.d: t.entry: the troggs of a pack, of Grubbis's event: summoned again
 naxxramas.d: npcCryptGuard: Anub'Rekhan's fight is not kept across a crash (no checkpoint of him): it starts over, his guards with it
 naxxramas.d: npcFalloutSlime: Grobbulus's fight is not kept across a crash: it starts over, his slimes with it

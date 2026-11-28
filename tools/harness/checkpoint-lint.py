@@ -18,6 +18,11 @@ LIST = REPO / "tools/harness/checkpoint-transient.txt"
 def entries(script):
     """The entries `script` summons that no checkpointing case names."""
     summoned = set()
+    # A summon kept in a variable that is checkpointed (Nefarian: `nefarianDragon = copy.summon(npcNefarian, ...)`,
+    # checkpointed further on): kept.
+    checkpointed = set(re.findall(r"checkpointCreature\(\s*(\w+)\s*\)", script))
+    held = {entry for var, entry in re.findall(r"\b(\w+)\s*=\s*\w+\.summon\w*\(\s*(npc\w+)", script)
+            if var in checkpointed}
     lines = script.split("\n")
     for i, line in enumerate(lines):
         for m in re.finditer(r"\bsummon\w*\(\s*(npc\w+|\w+\.\w+)", line):
@@ -28,7 +33,7 @@ def entries(script):
     for m in re.finditer(r"case ([^:]+):(.*?)(?=\n\s*case |\n\s*default:|\n    }\n)", script, re.S):
         if "checkpointCreature(" in m.group(2):
             kept |= {x.strip().split(".")[-1] for x in m.group(1).split(",")}
-    return {x for x in summoned if x.split(".")[-1] not in kept}
+    return {x for x in summoned if x.split(".")[-1] not in kept and x not in held}
 
 
 def main():
