@@ -185,7 +185,7 @@ uint spellDamage(ref Caster caster, const(SpellInfo)* spell, UnitRef victim, uin
             && caster.creature.spawn.entry == baronRivendare && (spell.attributesEx2 & spellAttrEx2NoInitialThreat);
         if (!blow.suppressCombat)
             caster.enteredCombat(damage);
-        blow.threat = caster.spellMod(SpellModOp.threat, spell, 1.0f); // (`SPELLMOD_THREAT`: Shadow Affinity)
+        blow.threat = caster.threatFactor(spell); // (`SPELLMOD_THREAT`: Shadow Affinity)
         dealDamage(caster.unit, victim, damage, blow);
     }
     caster.damageDealt(spell, victim, crit, damage, how.periodic);

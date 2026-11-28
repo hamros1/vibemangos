@@ -269,7 +269,7 @@ private void tickReplicas(ref Caster caster, const ref PersistentArea area, bool
         radius: area.spot.radius, casterLevel: caster.level, amount: 0, groundTick: true, groundAmount: damage, auraMs: holdMs);
     if (hurts)
     {
-        tick.threatFactor = caster.spellMod(SpellModOp.threat, spell, 1.0f);
+        tick.threatFactor = caster.threatFactor(spell);
         tick.resistanceModifier = school == 0 ? cast(int) caster.fighter.armorIgnored
             : caster.auras.totalByMiscMask(AuraType.modTargetResistance, 1 << school);
     }

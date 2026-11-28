@@ -509,6 +509,44 @@ private void stance(ref RealWorld w, ref TestClient who, uint which)
 // Warrior
 // ---------------------------------------------------------------------------
 
+/// Sunder Armor rank 5 (11597: `spell_threat` 261) angers its target by 261, by the warrior's threat modifiers
+/// (its stance's), though it deals no damage (CMaNGOS's `HandleThreatSpells`).
+unittest
+{
+    import std.math : isClose;
+
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto who = w.character(201, "Varian", PlayerClass.warrior, 60, [battleStance, 11597]);
+    auto me = who.session.inWorld;
+    equip(who, wornShortsword);
+    const hogger = foe(w, who, 448);
+    auto target = creatureOf(w, hogger);
+    bool sundered;
+    float added = 0;
+    foreach (_; 0 .. 20)
+    {
+        setPower(who, Power.rage, 500);
+        w.now += 2.seconds;
+        const before = target.ai.threatOf(me.player.guid);
+        w.castAt(who, 11597, hogger);
+        if (target.auras.find(11597) !is null)
+        {
+            added = target.ai.threatOf(me.player.guid) - before;
+            sundered = true;
+            break;
+        }
+    }
+    assert(sundered);
+    const expected = 261 * me.player.damageMods.threat[0];
+    assert(isClose(added, expected, 0.01), format!"Sunder Armor's threat: %s, not %s"(added, expected));
+    // A rank without a row of its own takes its lower rank's: Mind Blast's double threat (8092's) at rank 9 (10947).
+    const spells = w.context.data.spells;
+    assert(spells.spell(8092).casting.threatMultiplier == 2 && spells.spell(10947).casting.threatMultiplier == 2);
+    assert(spells.spell(11597).casting.threatFlat == 261 && spells.spell(7386).casting.threatFlat == 100);
+}
+
 /**
  * The modifiers as the casts use them: Improved Sunder Armor's rage (12 of 15 spent), Improved Taunt's cooldown (8
  * sec), Improved Shield Wall's and Improved Shield Block's duration (15 and 7 sec) and Shield Block's extra charge,

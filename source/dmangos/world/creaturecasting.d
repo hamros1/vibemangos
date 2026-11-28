@@ -1929,7 +1929,7 @@ mixin template CreatureCasting()
         }
         auto targets = swingTargets(primary, spell.casting.chainTarget[effect], true);
         auto caster = spellCaster();
-        const threat = caster.spellMod(SpellModOp.threat, spell, 1.0f);
+        const threat = caster.threatFactor(spell);
         ulong[] local;
         foreach (target; targets)
             if (target.replica is null)

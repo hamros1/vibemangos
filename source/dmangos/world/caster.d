@@ -221,6 +221,15 @@ struct Caster
         }
     }
 
+    /// What `spell`'s threat (its damage's, its heal's) is times: its threat modifiers (`SPELLMOD_THREAT`: Shadow
+    /// Affinity) and its `spell_threat` multiplier (Mind Blast's double: CMaNGOS's `GetSpellThreatMultiplier`).
+    float threatFactor(const(SpellInfo)* spell)
+    {
+        import dmangos.world.spellmods : SpellModOp;
+
+        return spellMod(SpellModOp.threat, spell, 1.0f) * spell.casting.threatMultiplier;
+    }
+
     /// Its spell power for spells of the schools in `schoolMask` (`SpellBaseDamageBonusDone`): its `MOD_DAMAGE_DONE`
     /// auras (a player's spirit's share too).
     int spellPower(uint schoolMask)

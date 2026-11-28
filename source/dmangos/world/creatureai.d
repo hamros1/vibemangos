@@ -1720,7 +1720,7 @@ enum uint spellAttrExNoThreat = 0x00000400, spellAttrEx2NoInitialThreat = 0x0040
  * `SPELL_ATTR_EX2_NO_INITIAL_THREAT` angers no one.
  */
 bool assistThreat(Map world, const(ulong)[] fightingHelped, UnitRef helper, uint amount,
-    const ref SpellInfo spell, const Relating* remote = null)
+    const ref SpellInfo spell, const Relating* remote = null, float share = 0.5f)
 {
     import dmangos.world.relations : canAttack;
 
@@ -1738,7 +1738,7 @@ bool assistThreat(Map world, const(ulong)[] fightingHelped, UnitRef helper, uint
         if (canAttack(c.ai.relatingOf, remote is null ? helper.relating : *remote, c.client))
             angered ~= c;
     }
-    const each = assistThreatEach(amount, angered.length);
+    const each = assistThreatEach(amount, angered.length, share);
     foreach (c; angered)
     {
         if (remote is null)
@@ -1750,10 +1750,10 @@ bool assistThreat(Map world, const(ulong)[] fightingHelped, UnitRef helper, uint
     return angered.length != 0;
 }
 
-/// Each creature's threat from a heal of `amount` shared among `creatures`: half the heal, divided.
-float assistThreatEach(uint amount, size_t creatures) pure nothrow @nogc @safe
+/// Each creature's threat from a heal of `amount` shared among `creatures`: half the heal (`share`), divided.
+float assistThreatEach(uint amount, size_t creatures, float share = 0.5f) pure nothrow @nogc @safe
 {
-    return creatures ? amount * 0.5f / creatures : 0;
+    return creatures ? amount * share / creatures : 0;
 }
 
 unittest

@@ -104,7 +104,7 @@ void applyAura(ref Caster caster, const(SpellInfo)* spell, size_t i, UnitRef tar
         const school = spell.casting.school;
         if (p !is null && school < 7 && (aura.has(AuraType.periodicDamage) || aura.has(AuraType.periodicLeech)))
         {
-            aura.periodicThreat = p.player.damageMods.threat[school] * caster.spellMod(SpellModOp.threat, spell, 1.0f);
+            aura.periodicThreat = p.player.damageMods.threat[school] * caster.threatFactor(spell);
             aura.periodicResistanceMod = caster.auras.totalByMiscMask(AuraType.modTargetResistance, 1 << school);
             aura.periodicCasterPvP = p.pvp.isPvP;
         }
@@ -458,7 +458,7 @@ void periodicTick(ref Caster caster, imported!"dmangos.world.creature".Creature 
 
             caster.enteredCombat(damage);
             auto blow = Blow.periodic(school);
-            blow.threat = caster.spellMod(SpellModOp.threat, aura.spell, 1.0f);
+            blow.threat = caster.threatFactor(aura.spell);
             dealDamage(caster.unit, victim, damage, blow);
         }
         caster.damageDealt(aura.spell, victim, false, damage, true); // Nightfall, Vampiric Embrace
@@ -520,7 +520,7 @@ void leechTick(ref Caster caster, UnitRef victim, Aura aura, size_t i, uint dama
     caster.enteredCombat(damage);
     auto blow = Blow.periodic(school);
     if (victim.kind == UnitKind.creature)
-        blow.threat = caster.spellMod(SpellModOp.threat, aura.spell, 1.0f);
+        blow.threat = caster.threatFactor(aura.spell);
     dealDamage(caster.unit, victim, damage, blow);
     const factor = aura.spell.casting.multipleValue[i] > 0 ? aura.spell.casting.multipleValue[i] : 1.0f;
     if (caster.alive)

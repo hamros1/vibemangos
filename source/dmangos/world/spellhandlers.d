@@ -3519,6 +3519,7 @@ private:
             else if (r.miss == SpellMissInfo.dodge && spell.casting.dmgClass == DamageClass.melee)
                 dodgedBy ~= r.guid;
         }
+        spellThreatBonus(spell, landed, results.length);
         landedWithoutDamageProcs(spell, c.triggered, landed);
         trapEffectLanded(spell, landed); // Entrapment (dmangos.world.physicalclasses)
         classAfterEffects(spell, landed, dodgedBy);
@@ -3575,7 +3576,7 @@ private:
                     creatureType = proto.creatureType;
         const versus = creatureType < creatureTypes ? player.damageMods.versus[creatureType] : 1;
         hit.amount = damage * player.damageMods.school[school] * versus;
-        hit.threatFactor = player.damageMods.threat[school] * spellMod(SpellModOp.threat, spell, 1.0f);
+        hit.threatFactor = player.damageMods.threat[school] * threatFactor(spell);
         hit.critChance = spellCritOf(spell);
         hit.frozenCritBonus = frozenTargetCritBonus(spell);
         hit.resistanceModifier = player.auras.totalByMiscMask(AuraType.modTargetResistance, 1 << school);
@@ -3620,7 +3621,7 @@ private:
                 if ((mask & (1 << j)) && (type == AuraType.periodicDamage || type == AuraType.periodicLeech)
                     && school < 7)
                 {
-                    hit.threatFactor = player.damageMods.threat[school] * spellMod(SpellModOp.threat, spell, 1.0f);
+                    hit.threatFactor = player.damageMods.threat[school] * threatFactor(spell);
                     hit.resistanceModifier = player.auras.totalByMiscMask(AuraType.modTargetResistance, 1 << school);
                     break;
                 }
@@ -3719,7 +3720,7 @@ private:
             remote.heal.amount = rollHealing(healer, spell, value, remote.heal.critical,
                 SpellBounce(spell.casting.dmgMultiplier[remote.heal.effect], remote.bounce));
             remote.heal.threatFlat = spellMod(SpellModOp.threat, spell, 0.0f);
-            remote.heal.threatFactor = spellMod(SpellModOp.threat, spell, 1.0f) - remote.heal.threatFlat;
+            remote.heal.threatFactor = threatFactor(spell) - remote.heal.threatFlat;
             remote.heal.suppressProcs = c.custom.by !is null;
             remote.heal.sequence = context.nextGameplaySequence();
             context.sendPartyHeal(remote.peer, remote.heal);
@@ -4100,6 +4101,46 @@ private:
         deliver(Opcode.SMSG_COOLDOWN_EVENT, w.data);
     }
 
+    /**
+     * The threat `spell_threat` gives `spell` beyond its damage (CMaNGOS's `Spell::HandleThreatSpells`): its flat
+     * threat and its share of the attack power. A harmful spell's is shared among all `targets` it was cast at and
+     * put on each creature it `landed` on, by the threat modifiers (Defensive Stance's, `SPELLMOD_THREAT`): Sunder
+     * Armor's, Revenge's, Shield Slam's, Thunder Clap's. A helpful one's (a Blessing's, Battle Shout's, Holy
+     * Shield's) goes, whole, to those fighting each it landed on, shared out among them as a heal's is.
+     */
+    private void spellThreatBonus(const(SpellInfo)* spell, const(ulong)[] landed, size_t targets)
+    {
+        import dmangos.world.creatureai : assistThreat;
+
+        if (!spell.casting.threatRow || landed.length == 0 || targets == 0)
+            return;
+        float threat = spell.casting.threatFlat;
+        if (spell.casting.threatApBonus != 0)
+            threat += spell.casting.threatApBonus * (spell.casting.dmgClass == DamageClass.ranged
+                ? player.stats.rangedAttackPower : player.stats.attackPower);
+        if (threat <= 0)
+            return;
+        import dmangos.world.relations : canAttack;
+
+        const school = spell.casting.school < 7 ? spell.casting.school : 0;
+        const factor = player.damageMods.threat[school] * threatFactor(spell);
+        foreach (guid; landed)
+        {
+            auto unit = guid == player.guid ? UnitRef.of(this) : map.unit(guid);
+            if (!unit)
+                continue;
+            if (unit.kind == UnitKind.creature && unit.creature.alive && unit.creature.ai !is null
+                && canAttack(relatingNow(), unit.relating, context.client))
+            {
+                unit.creature.ai.addThreat(UnitRef.of(this), threat / targets * factor);
+                map.wake(unit.creature.guid);
+            }
+            else if (unit.kind == UnitKind.player)
+                assistThreat(map, unit.session.threateners, UnitRef.of(this),
+                    cast(uint)(threat * threatFactor(spell)), *spell, null, 1.0f);
+        }
+    }
+
     /// `value` of `spell`'s property `op`, with this player's spell modifiers (talents).
     package T spellMod(T)(SpellModOp op, const(SpellInfo)* spell, T value)
     {
@@ -4107,6 +4148,12 @@ private:
         if (modified != value)
             noteChargedMods(op, spell);
         return modified;
+    }
+
+    /// What a spell's threat is times (`Caster.threatFactor`): its threat modifiers, its `spell_threat` multiplier.
+    package float threatFactor(const(SpellInfo)* spell)
+    {
+        return spellMod(SpellModOp.threat, spell, 1.0f) * spell.casting.threatMultiplier;
     }
 
     /// The modifiers with charges (Clearcasting, Presence of Mind, Nature's Swiftness) that changed a cast of a
@@ -4860,7 +4907,7 @@ private:
         enterCombatFor(combatLinger);
         auto blow = tick ? Blow.periodic(school) : Blow.spell(school);
         if (spell !is null)
-            blow.threat = spellMod(SpellModOp.threat, spell, 1.0f);
+            blow.threat = threatFactor(spell);
         dealDamage(unit, map.unitOf(victim), damage, blow);
     }
 

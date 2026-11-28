@@ -133,6 +133,13 @@ struct SpellCastInfo
     ulong[3] affectMask;       /// `spell_affect`: the spell family mask an effect affects, where it overrides `EffectItemType`
     uint attributesEx4;
     uint attributesServerside; /// `AttributesServerside`: CMaNGOS's own flags (`SPELL_ATTR_SS_*`)
+    /// `spell_threat` (its rank's row, else a lower rank's: CMaNGOS's `FillHigherRanks`): threat more for each target
+    /// it lands on (Sunder Armor's, Revenge's, Shield Slam's), more by a share of the attack power, and its damage's
+    /// threat times `threatMultiplier` (Mind Blast's double).
+    int threatFlat;
+    float threatApBonus = 0;
+    float threatMultiplier = 1;
+    bool threatRow;            /// it has a row (its own or a lower rank's)
 }
 
 /**
@@ -339,6 +346,29 @@ final class SpellData
         return id in learnSkills;
     }
 
+    /// A rank without a `spell_threat` row of its own takes its nearest lower rank's (CMaNGOS's `FillHigherRanks`).
+    void fillThreatRanks()
+    {
+        uint[] ids;
+        foreach (id, ref const spell; spells)
+            if (!spell.casting.threatRow && id in chains)
+                ids ~= id;
+        foreach (id; ids)
+        {
+            uint lower = chains[id].prev;
+            while (lower && lower in spells && !spells[lower].casting.threatRow)
+                lower = lower in chains ? chains[lower].prev : 0;
+            if (!lower || lower !in spells)
+                continue;
+            const from = spells[lower].casting;
+            auto spell = spells.edit(id);
+            spell.casting.threatFlat = from.threatFlat;
+            spell.casting.threatApBonus = from.threatApBonus;
+            spell.casting.threatMultiplier = from.threatMultiplier;
+            spell.casting.threatRow = true;
+        }
+    }
+
     /// Loads the spells and builds every derived map.
     static SpellData load(MySqlConnection world, const ClientData client)
     {
@@ -367,6 +397,14 @@ final class SpellData
             data.procEvents[row.get!uint(0)] = SpellProcEvent(row.get!uint(1), row.get!uint(2),
                 [row.get!ulong(3), row.get!ulong(4), row.get!ulong(5)], row.get!uint(6), row.get!uint(7),
                 row.get!float(8), row.get!float(9), row.get!uint(10));
+        foreach (row; world.query!"SELECT entry, Threat, multiplier, ap_bonus FROM spell_threat"())
+            if (auto spell = data.spells.edit(row.get!uint(0)))
+            {
+                spell.casting.threatFlat = row.get!int(1);
+                spell.casting.threatMultiplier = row.get!float(2);
+                spell.casting.threatApBonus = row.get!float(3);
+                spell.casting.threatRow = true;
+            }
         // Marksman Hit is a scripted event delivered to the unit the DB relay selects.
         if (auto shot = data.spells.edit(12198))
             if (shot.effect[0] == SpellEffect.dummy && shot.implicitTargetA[0] == ImplicitTarget.caster)
@@ -380,6 +418,7 @@ final class SpellData
             "SELECT spell_id, prev_spell, first_spell, `rank`, req_spell FROM spell_chain")();
         LearnRow[] learnRows = world.queryAs!(LearnRow, "SELECT entry, SpellID, Active FROM spell_learn_spell")();
         data.build(client, chainRows, learnRows);
+        data.fillThreatRanks();
         info!"loaded %s spells, %s spell chain nodes, %s spell-learn links, %s spell-learn skills"(
             data.spells.length, data.chains.length, data.learnSpells.length, data.learnSkills.length);
         return data;
