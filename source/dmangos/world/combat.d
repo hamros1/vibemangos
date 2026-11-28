@@ -304,14 +304,46 @@ struct Immunities
     ulong[3] effects; /// bit `effect` (`EFFECT_IMMUNITY`)
     ulong[4] states;  /// bit `aura type` (`STATE_IMMUNITY`)
 
-    /// From a creature's template masks (0 for a player) and `auras`.
-    static Immunities of(A)(const ref A auras, uint mechanicMask = 0, uint schoolMask = 0)
+    /**
+     * One row of a creature's immunity set (`creature_immunities`, CMaNGOS's `ApplySpellImmune`): `type` 0 an effect,
+     * 1 an aura type (a state), 2 a school mask, 3 a school mask of damage, 4 a dispel type, 5 a mechanic.
+     */
+    void add(uint type, uint value) pure nothrow @nogc @safe
+    {
+        switch (type)
+        {
+        case 0:
+            if (value < 192)
+                effects[value / 64] |= 1UL << (value % 64);
+            break;
+        case 1:
+            if (value < 256)
+                states[value / 64] |= 1UL << (value % 64);
+            break;
+        case 2: schools |= value; break;
+        case 3: damage |= value; break;
+        case 4:
+            if (value < 32)
+                dispels |= 1u << value;
+            break;
+        case 5:
+            if (value > 0 && value <= 32)
+                mechanics |= 1u << (value - 1);
+            break;
+        default:
+            break;
+        }
+    }
+
+    /// From a creature's template masks (0 for a player), its immunity set (`creature_immunities`) and `auras`.
+    static Immunities of(A)(const ref A auras, uint mechanicMask = 0, uint schoolMask = 0,
+        const Immunities base = Immunities.init)
     {
         import dmangos.world.spellids : AuraType;
 
-        Immunities m;
-        m.mechanics = mechanicMask;
-        m.schools = schoolMask;
+        Immunities m = base;
+        m.mechanics |= mechanicMask;
+        m.schools |= schoolMask;
         foreach (aura; auras.list)
             foreach (i; 0 .. 3)
             {

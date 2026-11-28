@@ -258,6 +258,69 @@ unittest
     assert(mana, "20268's mana, half the time");
 }
 
+/// `creature_spawn_data`: the Plague Spreaders of spawns 5237 .. 5239 (604) are of faction 43, not their template's;
+/// spawn 6150 (848) runs as it comes (`SPAWN_FLAG_RUN_ON_SPAWN`); a spawn without data (Hogger's) is its template's.
+unittest
+{
+    import dmangos.world.creature : Creature;
+    import dmangos.world.movement : MovementFlags;
+    import dmangos.world.updatefields : UNIT_FIELD_FACTIONTEMPLATE;
+
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    Creature spawned(uint entry, uint guid, float x, float y)
+    {
+        foreach (ref spawn; w.context.data.creatureSpawns)
+            if (spawn.guid == guid)
+                return w.context.makeCreature(&spawn);
+        return null;
+    }
+    auto spreader = spawned(604, 5237, -11256.5f, -358.5f);
+    assert(spreader !is null && spreader.values.get!UNIT_FIELD_FACTIONTEMPLATE == 43
+        && w.context.data.creatureTemplates[604].faction != 43, "the Plague Spreader's faction of its spawn");
+    auto runner = spawned(848, 6150, -9327.6f, -2202.1f);
+    assert(runner !is null && !runner.movement.has(MovementFlags.walkMode), "spawn 6150 runs");
+}
+
+/// `item_required_target`: the Wildkin Muisek Vessel (9618) only at a slain owlbeast (2927, type 2: dead), not a live
+/// one nor Hogger (448); a Hearthstone (6948), named by no row, at anything.
+unittest
+{
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto who = w.character(20, "Muisek", PlayerClass.hunter, 60, [], 3);
+    auto me = who.session.inWorld;
+    const owlbeast = w.enemy(who, 2927), hogger = w.enemy(who, 448);
+    assert(!me.itemTargetAllowed(9618, owlbeast), "not at a live owlbeast");
+    assert(!me.itemTargetAllowed(9618, hogger) && !me.itemTargetAllowed(9618, 0), "nor at another, nor at none");
+    assert(me.itemTargetAllowed(6948, hogger) && me.itemTargetAllowed(6948, 0), "an item no row names: anything");
+    creatureOf(w, owlbeast).values.set!(imported!"dmangos.world.updatefields".UNIT_FIELD_HEALTH)(0u); // slain
+    assert(me.itemTargetAllowed(9618, owlbeast), "at a slain one");
+}
+
+/// A creature's immunity set (`creature_immunities`, set 0): Sneed's Shredder (642) takes no taunt (effect 114,
+/// `MOD_TAUNT`), the Shade of Eranikus (5709) no slowing of its casts nor of its legs (auras 216, 33); Hogger (448),
+/// without a set, both.
+unittest
+{
+    import dmangos.world.spellids : AuraType, SpellEffect;
+
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto who = w.character(19, "Immune", PlayerClass.warrior, 60, []);
+    const shredder = creatureOf(w, w.enemy(who, 642)).fighter.immune;
+    assert(shredder.toEffect(SpellEffect.attackMe, 0, 0) && shredder.toEffect(SpellEffect.applyAura, 0, AuraType.modTaunt),
+        "Sneed's Shredder: no taunt");
+    const shade = creatureOf(w, w.enemy(who, 5709)).fighter.immune;
+    assert(shade.toEffect(SpellEffect.applyAura, 0, 216) && shade.toEffect(SpellEffect.applyAura, 0, AuraType.modDecreaseSpeed),
+        "the Shade of Eranikus: no slowing");
+    const hogger = creatureOf(w, w.enemy(who, 448)).fighter.immune;
+    assert(!hogger.toEffect(SpellEffect.attackMe, 0, 0) && !hogger.toEffect(SpellEffect.applyAura, 0, 216), "Hogger: none");
+}
+
 /// A relic's spell power for the spells its aura affects: Totem of Life's (27855: 80, `spell_affect` 128) for Lesser
 /// Healing Wave (8004), not Healing Wave (331); Totem of Rage's (27859: 30, by its `EffectItemType`) for Earth Shock
 /// (8042), not Lightning Bolt (403). None without it.

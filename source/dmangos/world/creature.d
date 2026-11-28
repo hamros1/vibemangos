@@ -541,6 +541,10 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
 {
     immutable ulong guid_;
     const(CreatureTemplate)* template_;
+    /// Its immunity set (`creature_immunities`, set 0: CMaNGOS's `UpdateImmunitiesSet(0)` as it is made): what no
+    /// spell does to it beside its template's masks (Curse of Tongues' slowing, a taunt, a poison).
+    imported!"dmangos.world.combat".Immunities immunitySet;
+    bool spawnHover; /// its spawn's data has it hover (`SPAWN_FLAG_HOVER`), whatever its auras
     const CreatureSpawn spawn;
     MovementInfo movement;
     UpdateValues values;
@@ -942,7 +946,8 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         uint changedModes;
         foreach (mode; modes)
         {
-            const enabled = auras.has(mode.aura);
+            // (Its spawn's data may keep it hovering: `SPAWN_FLAG_HOVER`.)
+            const enabled = auras.has(mode.aura) || (spawnHover && mode.flag == MovementFlags.hover);
             if (enabled == movement.has(mode.flag))
                 continue;
             if (enabled)
@@ -1420,8 +1425,8 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
             }
             import dmangos.world.combat : Immunities;
 
-            if (auras.list.length || template_.mechanicImmuneMask || template_.schoolImmuneMask)
-                f.immune = Immunities.of(auras, template_.mechanicImmuneMask, template_.schoolImmuneMask);
+            if (auras.list.length || template_.mechanicImmuneMask || template_.schoolImmuneMask || immunitySet.any)
+                f.immune = Immunities.of(auras, template_.mechanicImmuneMask, template_.schoolImmuneMask, immunitySet);
             if (auras.list.length)
             {
                 f.attackerChancesFrom(auras);

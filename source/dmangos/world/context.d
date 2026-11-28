@@ -2059,13 +2059,20 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
                         break;
                     }
         const template_ = spawn.entry in data.creatureTemplates;
-        const display = chooseDisplay(*template_, spawnRandom);
+        // Its spawn's data (`creature_spawn_data`): a model, equipment, faction, flags of its own.
+        const spawnData = petNumber ? null : spawnDataFor(spawn.guid);
+        const display = spawnData !is null && spawnData.modelId ? spawnData.modelId : chooseDisplay(*template_, spawnRandom);
         if (display == 0)
             return null;
         const level = chooseLevel(*template_, spawnRandom);
-        auto parts = creatureParts(*template_, spawn.guid, display, level,
-            shape !is null && shape.equipment ? shape.equipment : template_.equipmentTemplateId);
+        const equipment = shape !is null && shape.equipment ? shape.equipment
+            : spawnData !is null && spawnData.equipmentId != -1 ? cast(uint) spawnData.equipmentId : template_.equipmentTemplateId;
+        auto parts = creatureParts(*template_, spawn.guid, display, level, equipment);
         auto creature = new Creature(*spawn, template_, display, level, parts, client, petNumber);
+        if (const set = spawn.entry in data.creatureImmunities)
+            creature.immunitySet = *set;
+        if (spawnData !is null)
+            applySpawnData(creature, *spawnData);
         if (shape !is null)
             applyEventShape(creature, *shape);
         // A creature of the water spawned where it can swim swims (unless made to walk in water: crabs).
@@ -2159,6 +2166,61 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
      * A creature made while event `shape.event` is on: its model, and its spell's auras (a transformation
      * takes the named creature's model). It is marked with the event, to be made again when it ends.
      */
+    /// The `creature_spawn_data_template` row spawn `guid` is bound to, if any.
+    const(imported!"dmangos.world.worlddata".SpawnDataTemplate)* spawnDataFor(uint guid) const
+    {
+        if (const id = guid in data.spawnDataOf)
+            return *id in data.spawnDataTemplates;
+        return null;
+    }
+
+    /**
+     * What a spawn's data gives it (CMaNGOS's `Creature::LoadFromDB` and `UpdateEntry` with its spawn template): a
+     * faction, NPC and unit flags, health and mana of its own; running, hovering or floating as it comes (its
+     * relay starts as its cell loads: `Map.loadCell`).
+     */
+    private void applySpawnData(Creature creature, const ref imported!"dmangos.world.worlddata".SpawnDataTemplate d)
+    {
+        import dmangos.world.movement : MovementFlags;
+        import dmangos.world.updatefields : UNIT_FIELD_FACTIONTEMPLATE, UNIT_FIELD_FLAGS, UNIT_FIELD_HEALTH,
+            UNIT_FIELD_MAXHEALTH, UNIT_FIELD_MAXPOWER1, UNIT_FIELD_POWER1, UNIT_NPC_FLAGS;
+
+        if (d.faction)
+            if (const entry = client.factionTemplates.lookup(d.faction))
+            {
+                creature.factionTemplate = entry;
+                creature.values.set!UNIT_FIELD_FACTIONTEMPLATE(d.faction);
+            }
+        if (d.npcFlags != -1)
+            creature.values.set!UNIT_NPC_FLAGS(cast(uint) d.npcFlags);
+        if (d.unitFlags != -1)
+            creature.values.set!UNIT_FIELD_FLAGS(cast(uint) d.unitFlags);
+        if (d.curHealth)
+        {
+            const most = creature.values.get!UNIT_FIELD_MAXHEALTH;
+            creature.values.set!UNIT_FIELD_HEALTH(d.curHealth < most ? d.curHealth : most);
+        }
+        if (d.curMana)
+        {
+            const most = creature.values.get!UNIT_FIELD_MAXPOWER1;
+            creature.values.set!UNIT_FIELD_POWER1(d.curMana < most ? d.curMana : most);
+        }
+        enum uint runOnSpawn = 0x01, hover = 0x02, gravityOff = 0x04;
+        if (d.spawnFlags & runOnSpawn)
+            creature.movement.flags &= ~MovementFlags.walkMode;
+        if (d.spawnFlags & hover)
+        {
+            creature.spawnHover = true;
+            creature.movement.flags |= MovementFlags.hover;
+        }
+        if (d.spawnFlags & gravityOff)
+        {
+            creature.movement.flags |= MovementFlags.levitating;
+            creature.scriptFlying = true;
+        }
+        creature.values.clearChanges();
+    }
+
     private void applyEventShape(Creature creature, const ref EventCreature shape)
     {
         import dmangos.world.auras : AuraType, makeAura;
@@ -3305,6 +3367,15 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     GameObject makeGameObject(scope const ref GameObjectSpawn spawn)
     {
         auto go = new GameObject(spawn, spawn.entry in data.gameObjectTemplates);
+        // A door or button its spawn's addon has open or shut (`gameobject_addon.state`, -1 its template's way).
+        if (const state = spawn.guid in data.gameObjectAddonStates)
+            if (go.template_ !is null && (go.template_.type == GameObjectType.door || go.template_.type == GameObjectType.button))
+            {
+                import dmangos.world.updatefields : GAMEOBJECT_STATE;
+
+                go.values.set!GAMEOBJECT_STATE(*state);
+                go.values.clearChanges();
+            }
         go.setElevator(fleet.elevatorPathOf(go.guid, go.fields), &fleet.transportNow);
         if (const kit = worldPvp is null ? 0 : worldPvp.artKitOf(spawn.entry, spawn.x, spawn.y, spawn.z))
         {

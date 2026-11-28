@@ -929,12 +929,23 @@ final class Map : MotionWorld
         if (spawner is null || key in loadedCells || (owns !is null && !owns(key)))
             return;
         loadedCells[key] = true;
+        Creature[] relayed;
         foreach (object; spawner(id, key))
         {
             const slot = slotFor(object.guid);
             if (slot == uint.max || at(slot).replica)
+            {
                 hold(object, key);
+                if (auto creature = cast(Creature) object)
+                    relayed ~= creature;
+            }
         }
+        // A spawn's data's relay, as it comes into the world (CMaNGOS's `LoadFromDB`, then `ScriptsStart`).
+        if (world !is null)
+            foreach (creature; relayed)
+                if (const d = world.spawnDataFor(creature.spawn.guid))
+                    if (d.relayId)
+                        world.startRelay(d.relayId, this, creature.guid, 0);
     }
 
     /// How often `update` looks for idle cells.

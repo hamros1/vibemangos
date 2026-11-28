@@ -427,6 +427,27 @@ private:
 
     private enum uint dominionOfSoul = 16053; // Orb of Draconic Energy
 
+    /// Whether item `entry` may be used at `target`: any target, unless `item_required_target` names creatures for
+    /// it, when only one of them, alive (type 1) or dead (2). A creature another node simulates is let be (it checks).
+    package bool itemTargetAllowed(uint entry, ulong target)
+    {
+        const required = entry in context.data.itemRequiredTargets;
+        if (required is null)
+            return true;
+        if (!target)
+            return false;
+        auto object = map.findObject(target);
+        if (cast(Replica) object !is null)
+            return true;
+        auto creature = cast(Creature) object;
+        if (creature is null)
+            return false;
+        foreach (row; *required)
+            if (row[1] == creature.template_.entry && (row[0] == 1 ? creature.alive : row[0] == 2 && !creature.alive))
+                return true;
+        return false;
+    }
+
     private void useInventoryItem(Item item, const ref SpellTargets targets, bool handoff, ulong namedCreature = 0)
     {
         if (crowdControl.npcCharmer)
@@ -470,6 +491,12 @@ private:
             if (!dragon)
                 return deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(spell.id, SpellCastResult.badTargets, spell));
             actual = SpellTargets(TargetFlags.unit, dragon.combatGuid);
+        }
+        // Only at the creatures `item_required_target` names, if it names any (CMaNGOS's `IsTargetValidForItemUse`).
+        if (!itemTargetAllowed(proto.entry, actual.unit))
+        {
+            sendEquipError(InventoryResult.ok, item); // (the item is let go: no longer grey)
+            return deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(spell.id, SpellCastResult.badTargets, spell));
         }
         // Resolve the item's script once, where its target is authoritative.
         if (itemScript(proto.entry, actual.unit ? actual.unit : actual.gameObject))

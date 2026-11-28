@@ -434,6 +434,18 @@ struct SafeLocation
     float x = 0, y = 0, z = 0, orientation = 0;
 }
 
+/// A `creature_spawn_data_template` row: what a spawn bound to it has instead of its template's (-1 and 0: its
+/// template's), and the relay it starts as it comes into the world (CMaNGOS's `CreatureSpawnTemplate`).
+struct SpawnDataTemplate
+{
+    long npcFlags = -1, unitFlags = -1;
+    uint faction, modelId;
+    int equipmentId = -1; /// -1 its template's; 0 none
+    uint curHealth, curMana;
+    uint spawnFlags;      /// run (1), hover (2), gravity off (4): `SPAWN_FLAG_*`
+    uint relayId;
+}
+
 final class WorldData
 {
     enum holdsStaticData = true; // `dmangos.frozen.freezeAll` goes into it
@@ -467,6 +479,16 @@ final class WorldData
     size_t[][ulong][uint] gameObjectCells;          /// ditto, into `gameObjectSpawns`
     StaticMap!(uint, CreatureAddon) creatureAddons;             /// `creature_addon`, by spawn guid
     StaticMap!(uint, CreatureAddon) creatureTemplateAddons;     /// `creature_template_addon`, by entry
+    /// `creature_spawn_data_template`, by its id: what a spawn bound to it (`creature_spawn_data`) has instead of its
+    /// template's (CMaNGOS's `CreatureSpawnTemplate`).
+    SpawnDataTemplate[uint] spawnDataTemplates;
+    uint[uint] spawnDataOf; /// `creature_spawn_data`: a spawn's guid -> its `spawnDataTemplates` id
+    uint[uint] gameObjectAddonStates; /// `gameobject_addon.state` (0 open, 1 shut) of the spawns that set one
+    /// `item_required_target`, by item: the creatures (alive: type 1; dead: 2) it may be used on, if any are named
+    /// (CMaNGOS's `IsTargetValidForItemUse`: the Muisek vessels, the Exiles' charms).
+    uint[2][][uint] itemRequiredTargets;
+    /// `creature_immunities` set 0, by entry: what a creature is immune to as it is made (`Creature.immunitySet`).
+    imported!"dmangos.world.combat".Immunities[uint] creatureImmunities;
     uint[3][uint] creatureEquipment;                /// `creature_equip_template`: item entries, by id
     CreatureClassStats[uint] creatureClassStats;    /// by `classStatsKey`
     NpcData npcs;                                   /// gossip, texts, trainers, vendors
@@ -723,6 +745,19 @@ final class WorldData
             data.creatureSpellLists[row.get!uint(0)] ~= SpellListEntry(row.get!uint(1), row.get!uint(2), row.get!int(3),
                 row.get!uint(4), row.get!uint(5), row.get!uint(6), row.get!uint(7), row.get!uint(8), row.get!uint(9),
                 combatExpressions.get(cast(uint) row.get!int(10), 0));
+        foreach (row; world.query!("SELECT Entry, NpcFlags, UnitFlags, Faction, ModelId, EquipmentId, CurHealth, "
+                ~ "CurMana, SpawnFlags, RelayId FROM creature_spawn_data_template")())
+            data.spawnDataTemplates[row.get!uint(0)] = SpawnDataTemplate(row.get!long(1), row.get!long(2),
+                row.get!uint(3), row.get!uint(4), row.get!int(5), row.get!uint(6), row.get!uint(7), row.get!uint(8),
+                row.get!uint(9));
+        foreach (row; world.query!"SELECT guid, state FROM gameobject_addon WHERE state >= 0"())
+            data.gameObjectAddonStates[row.get!uint(0)] = row.get!uint(1);
+        foreach (row; world.query!"SELECT Guid, Id FROM creature_spawn_data"())
+            data.spawnDataOf[row.get!uint(0)] = row.get!uint(1);
+        foreach (row; world.query!"SELECT entry, type, targetEntry FROM item_required_target"())
+            { uint[2] pair = [row.get!uint(1), row.get!uint(2)]; data.itemRequiredTargets[row.get!uint(0)] ~= pair; }
+        foreach (row; world.query!"SELECT Entry, Type, Value FROM creature_immunities WHERE SetId = 0"())
+            data.creatureImmunities.require(row.get!uint(0)).add(row.get!uint(1), row.get!uint(2));
         foreach (row; world.query!"SELECT entry, spell1, spell2, spell3, spell4 FROM creature_template_spells WHERE setId = 0"())
         {
             uint[4] spells;
