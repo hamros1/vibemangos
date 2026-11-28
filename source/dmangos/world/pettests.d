@@ -1536,10 +1536,27 @@ unittest
     auto b = boar_.receiveAura(makeAura(context.data.spells.spell(shout), 0, 60, -1, false, [-140, 0, 0]), map, added);
     assert(boar_.values.get!UNIT_FIELD_RESISTANCES(0) == armorBefore - 100, "less armor");
     assert(boar_.values.get!UNIT_FIELD_MAXDAMAGE < damageBefore, "weaker blows");
+    // Saved sundered and made again (a crash, a migration), its Sunder back with it: sundered once, not twice.
+    {
+        import dmangos.bytes : ByteReader, ByteWriter;
+
+        ByteWriter w;
+        boar_.saveState(w, 0);
+        auto again = context.summonCreature(map, boar, Position(-8946, -132.49f, 83.53f, 0), TempSpawnType.dead, 0, 0);
+        auto r = ByteReader(w.data);
+        again.loadState(r, 0);
+        again.receiveAura(makeAura(context.data.spells.spell(sunder), 0, 60, -1, false, [-100, 0, 0]), map, added);
+        assert(again.values.get!UNIT_FIELD_RESISTANCES(0) == armorBefore - 100, "sundered once after a restore");
+    }
     boar_.loseAura(a, map);
     boar_.loseAura(b, map);
     assert(boar_.values.get!UNIT_FIELD_RESISTANCES(0) == armorBefore && boar_.values.get!UNIT_FIELD_MAXDAMAGE == damageBefore,
         "both back as they go");
+    // A field set by other means (a GM's `.modify`, a script) stays under an aura that comes and goes.
+    boar_.values.set!UNIT_FIELD_MAXDAMAGE(5.0f);
+    auto c = boar_.receiveAura(makeAura(context.data.spells.spell(shout), 0, 60, -1, false, [-140, 0, 0]), map, added);
+    boar_.loseAura(c, map);
+    assert(boar_.values.get!UNIT_FIELD_MAXDAMAGE == 5.0f, "its set damage kept");
 }
 
 /// A creature's spell at its friends around it (`TARGET_ENUM_UNITS_FRIEND_AOE_AT_SRC_LOC`: a Battle Command)

@@ -1304,17 +1304,17 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
     }
 
     /// What the melee formulas (`dmangos.world.combat`) need of it now.
-    private int[7] baseResistances;  /// its armor and resistances before its auras (`refreshAuraStats`)
-    private int[2] baseAttackPower;  /// melee, ranged, likewise
-    private float[2][3] baseDamage;  /// by attack type, likewise
+    private float[7] auraResistances = 0; /// what its auras last added to its armor and resistances (`refreshAuraStats`)
+    private float[3] auraDamage = 0;      /// to its blows' damage, by attack type, likewise
     private uint statsAuraChanges = uint.max; /// `auras.changes` its stats were last worked out at
 
     /**
      * Its armor, resistances, attack power and damage again from its auras (CMaNGOS's `UpdateResistances`,
-     * `UpdateAttackPowerAndDamage`), when they changed: what it spawned with, `MOD_BASE_RESISTANCE_PCT` of that, the
+     * `UpdateAttackPowerAndDamage`), when they changed: of what it has without them, `MOD_BASE_RESISTANCE_PCT`, the
      * flat `MOD_RESISTANCE` (Sunder Armor, Faerie Fire, Curse of the Elements) and the strongest
      * `MOD_RESISTANCE_EXCLUSIVE`, times `MOD_RESISTANCE_PCT`; `MOD_ATTACK_POWER` and `MOD_RANGED_ATTACK_POWER`
-     * (Demoralizing Shout), and its blows by them (a fourteenth of it a second of its swing). A pet's are its own
+     * (Demoralizing Shout), and its blows by them (a fourteenth of it a second of its swing). What its auras added
+     * before is taken off first, so what else set them (a GM's `.modify`, a script) stays. A pet's are its own
      * (`showPetStats`).
      */
     void refreshAuraStats()
@@ -1329,31 +1329,34 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         {
             const mask = 1 << school;
             bool matches(int misc) { return (misc & mask) != 0; }
-            float value = baseResistances[school] * auras.multiplier(AuraType.modBaseResistancePct, &matches)
+            const without = max(0.0f, cast(float) values.get!UNIT_FIELD_RESISTANCES(school) - auraResistances[school]);
+            float value = without * auras.multiplier(AuraType.modBaseResistancePct, &matches)
                 + auras.totalByMiscMask(AuraType.modResistance, mask)
                 + auras.greatestByMiscMask(AuraType.modResistanceExclusive, mask);
-            value *= auras.multiplier(AuraType.modResistancePct, &matches);
-            values.set!UNIT_FIELD_RESISTANCES(school, cast(uint) max(0.0f, value));
+            value = max(0.0f, value * auras.multiplier(AuraType.modResistancePct, &matches));
+            values.set!UNIT_FIELD_RESISTANCES(school, cast(uint) value);
+            auraResistances[school] = cast(uint) value - without;
         }
         const int[2] mods = [auras.total(AuraType.modAttackPower), auras.total(AuraType.modRangedAttackPower)];
-        values.set!UNIT_FIELD_ATTACK_POWER(baseAttackPower[0]);
         values.set!UNIT_FIELD_ATTACK_POWER_MODS(cast(uint) cast(ushort) cast(short) mods[0]);
-        values.set!UNIT_FIELD_RANGED_ATTACK_POWER(baseAttackPower[1]);
         values.set!UNIT_FIELD_RANGED_ATTACK_POWER_MODS(cast(uint) cast(ushort) cast(short) mods[1]);
         const uint[3] swing = [values.get!UNIT_FIELD_BASEATTACKTIME(0), values.get!UNIT_FIELD_BASEATTACKTIME(1),
             values.get!UNIT_FIELD_RANGEDATTACKTIME];
-        float[2][3] damage;
-        foreach (type; 0 .. 3)
+        void blows(size_t type, float delegate() min_, void delegate(float) setMin, float delegate() max_,
+            void delegate(float) setMax)
         {
             const more = mods[type == 2] / 14.0f * swing[type] / 1000.0f;
-            damage[type] = [max(0.0f, baseDamage[type][0] + more), max(0.0f, baseDamage[type][1] + more)];
+            const low = min_() - auraDamage[type], high = max_() - auraDamage[type];
+            setMin(max(0.0f, low + more));
+            setMax(max(0.0f, high + more));
+            auraDamage[type] = max_() - high;
         }
-        values.set!UNIT_FIELD_MINDAMAGE(damage[0][0]);
-        values.set!UNIT_FIELD_MAXDAMAGE(damage[0][1]);
-        values.set!UNIT_FIELD_MINOFFHANDDAMAGE(damage[1][0]);
-        values.set!UNIT_FIELD_MAXOFFHANDDAMAGE(damage[1][1]);
-        values.set!UNIT_FIELD_MINRANGEDDAMAGE(damage[2][0]);
-        values.set!UNIT_FIELD_MAXRANGEDDAMAGE(damage[2][1]);
+        blows(0, () => values.get!UNIT_FIELD_MINDAMAGE, (float v) { values.set!UNIT_FIELD_MINDAMAGE(v); },
+            () => values.get!UNIT_FIELD_MAXDAMAGE, (float v) { values.set!UNIT_FIELD_MAXDAMAGE(v); });
+        blows(1, () => values.get!UNIT_FIELD_MINOFFHANDDAMAGE, (float v) { values.set!UNIT_FIELD_MINOFFHANDDAMAGE(v); },
+            () => values.get!UNIT_FIELD_MAXOFFHANDDAMAGE, (float v) { values.set!UNIT_FIELD_MAXOFFHANDDAMAGE(v); });
+        blows(2, () => values.get!UNIT_FIELD_MINRANGEDDAMAGE, (float v) { values.set!UNIT_FIELD_MINRANGEDDAMAGE(v); },
+            () => values.get!UNIT_FIELD_MAXRANGEDDAMAGE, (float v) { values.set!UNIT_FIELD_MAXRANGEDDAMAGE(v); });
     }
 
     /**
@@ -1727,6 +1730,15 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
     {
         import std.algorithm.comparison : max;
 
+        // Its armor, resistances and blows as it spawns, not as saved: what its auras added is in the saved ones,
+        // and its auras, back with it, add it again (`refreshAuraStats`).
+        uint[7] spawnResistances;
+        float[6] spawnDamage;
+        foreach (uint school; 0 .. 7)
+            spawnResistances[school] = values.get!UNIT_FIELD_RESISTANCES(school);
+        spawnDamage = [values.get!UNIT_FIELD_MINDAMAGE, values.get!UNIT_FIELD_MAXDAMAGE,
+            values.get!UNIT_FIELD_MINOFFHANDDAMAGE, values.get!UNIT_FIELD_MAXOFFHANDDAMAGE,
+            values.get!UNIT_FIELD_MINRANGEDDAMAGE, values.get!UNIT_FIELD_MAXRANGEDDAMAGE];
         const count = r.read!ushort;
         foreach (slot; 0 .. count)
         {
@@ -1734,6 +1746,20 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
             if (slot < values.length)
                 values.setSlot(slot, value);
         }
+        if (petData is null && !petOwner) // (a pet's stats are its own: `showPetStats`)
+        {
+            foreach (uint school; 0 .. 7)
+                values.set!UNIT_FIELD_RESISTANCES(school, spawnResistances[school]);
+            values.set!UNIT_FIELD_MINDAMAGE(spawnDamage[0]);
+            values.set!UNIT_FIELD_MAXDAMAGE(spawnDamage[1]);
+            values.set!UNIT_FIELD_MINOFFHANDDAMAGE(spawnDamage[2]);
+            values.set!UNIT_FIELD_MAXOFFHANDDAMAGE(spawnDamage[3]);
+            values.set!UNIT_FIELD_MINRANGEDDAMAGE(spawnDamage[4]);
+            values.set!UNIT_FIELD_MAXRANGEDDAMAGE(spawnDamage[5]);
+        }
+        auraResistances[] = 0;
+        auraDamage[] = 0;
+        statsAuraChanges = uint.max;
         values.clearChanges();
         movement = MovementInfo.read(r);
         scriptFlying = movement.has(MovementFlags.levitating);
@@ -1817,13 +1843,10 @@ private:
         values.set!UNIT_FIELD_MAXOFFHANDDAMAGE(combat.damage[1][1]);
         values.set!UNIT_FIELD_MINRANGEDDAMAGE(combat.damage[2][0]);
         values.set!UNIT_FIELD_MAXRANGEDDAMAGE(combat.damage[2][1]);
-        // What its auras work from (`refreshAuraStats`).
-        foreach (uint school; 0 .. 7)
-            baseResistances[school] = cast(int) values.get!UNIT_FIELD_RESISTANCES(school);
-        baseAttackPower = [cast(int) combat.meleeAttackPower, cast(int) combat.rangedAttackPower];
-        foreach (type; 0 .. 3)
-            baseDamage[type] = [combat.damage[type][0], combat.damage[type][1]];
-        statsAuraChanges = uint.max; // worked out again at its next update
+        // Its fields as it spawns, without its auras' part (`refreshAuraStats`): worked out again at its next update.
+        auraResistances[] = 0;
+        auraDamage[] = 0;
+        statsAuraChanges = uint.max;
         values.set!UNIT_FIELD_HEALTH(health);
         values.set!UNIT_FIELD_MAXHEALTH(health);
         values.set!UNIT_FIELD_POWER1(0, mana);

@@ -156,6 +156,7 @@ final class CreatureAI : Scripted, CreatureHost, ScourgeCampHost
         int combatTick;            // until the next leash check
         int restoringThreat;       // allow replicas to arrive after their target's region handoff
         int regenTimer;
+        int manaUsedAgo = int.max; // since it last spent mana (CMaNGOS's `IsUnderLastManaUseEffect`: five seconds)
         Position lastRefresh;      // where it was when its combat timer last started
         Position combatStart;      // where the fight began: it goes back there
         Position chasedTo;         // where the target was when it last set off after it
@@ -484,8 +485,9 @@ final class CreatureAI : Scripted, CreatureHost, ScourgeCampHost
                 checkForHelp(world);
             }
         }
-        if (!inCombat_)
-            regenerate(world, diff);
+        if (manaUsedAgo < int.max - diff)
+            manaUsedAgo += diff;
+        regenerate(world, diff);
     }
 
     /// Its threat list (`.debug threatList`): who it fights, and how much.
@@ -1660,21 +1662,34 @@ private:
     }
 
     /// Regeneration: a third of its health every five seconds out of combat.
+    /**
+     * Every five seconds (CMaNGOS's `Creature::RegenerateAll`): out of combat a third of its health and of its mana;
+     * in combat no health, and a twentieth of its mana unless it spent mana in the last five seconds (CMaNGOS's
+     * `RegeneratePower` for a creature without intellect: a caster keeps casting through a long fight).
+     */
     void regenerate(Map world, int diff)
     {
         const health = me.values.get!UNIT_FIELD_HEALTH, maximum = me.values.get!UNIT_FIELD_MAXHEALTH;
         const mana = me.values.get!UNIT_FIELD_POWER1, maxMana = me.values.get!UNIT_FIELD_MAXPOWER1;
         const flags = me.template_.regenerateStats;
-        if ((health >= maximum || !(flags & 2)) && (mana >= maxMana || !(flags & 8)))
+        const healthComes = !inCombat_ && health < maximum && (flags & 2);
+        const manaComes = mana < maxMana && (flags & 8) && (!inCombat_ || manaUsedAgo >= regenInterval);
+        if (!healthComes && !manaComes)
             return;
         regenTimer += diff;
         if (regenTimer < regenInterval)
             return;
         regenTimer -= regenInterval;
-        const added = health + maximum / 3;
-        if (flags & 2) me.values.set!UNIT_FIELD_HEALTH(added > maximum ? maximum : added);
-        const addedMana = mana + maxMana / 3; // mana out of combat: a third too
-        if (flags & 8) me.values.set!UNIT_FIELD_POWER1(addedMana > maxMana ? maxMana : addedMana);
+        if (healthComes)
+        {
+            const added = health + maximum / 3;
+            me.values.set!UNIT_FIELD_HEALTH(added > maximum ? maximum : added);
+        }
+        if (manaComes)
+        {
+            const addedMana = mana + (inCombat_ ? maxMana / 20 : maxMana / 3);
+            me.values.set!UNIT_FIELD_POWER1(addedMana > maxMana ? maxMana : addedMana);
+        }
         world.flushCreature(me);
     }
 
@@ -1972,4 +1987,40 @@ unittest
     tick(100);
     tick(100);
     assert(keeper.ai.inCombat && !keeper.ai.evading, "in reach: a fight as ever");
+}
+
+/// A creature's mana comes back in combat too, a twentieth every five seconds, and a third out of it (CMaNGOS's
+/// `RegeneratePower`): a caster keeps casting through a long fight.
+unittest
+{
+    import core.time : MonoTime;
+    import std.format : format;
+    import dmangos.world.movement : Position;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f));
+    anduin.read();
+    auto map = context.map(0);
+    auto keeper = cast(Creature) map.findObject(makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn));
+    context.data.creatureTemplates.edit(creatureInnkeeper).regenerateStats |= 8; // its mana regenerates
+    keeper.values.set!UNIT_FIELD_MAXPOWER1(1000u);
+    keeper.values.set!UNIT_FIELD_POWER1(0u);
+    keeper.ai.attackedBy(anduin.session.inWorld.unit, map);
+    assert(keeper.ai.inCombat);
+    keeper.ai.regenerate(map, 5000);
+    assert(keeper.values.get!UNIT_FIELD_POWER1 == 50, format!"a twentieth in combat: %s"(keeper.values.get!UNIT_FIELD_POWER1));
+    keeper.ai.manaUsedAgo = 0; // it spent mana: five seconds without
+    keeper.ai.regenerate(map, 5000);
+    assert(keeper.values.get!UNIT_FIELD_POWER1 == 50, "none within five seconds of spending");
+    keeper.ai.manaUsedAgo = 5000;
+    keeper.ai.enterEvadeMode(map);
+    keeper.ai.regenerate(map, 5000);
+    assert(keeper.values.get!UNIT_FIELD_POWER1 == 50 + 333, format!"a third out of it: %s"(keeper.values.get!UNIT_FIELD_POWER1));
 }

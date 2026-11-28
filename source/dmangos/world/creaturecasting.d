@@ -895,6 +895,8 @@ mixin template CreatureCasting()
             return;
         const cost = manaCost(spell), mana = me.values.get!UNIT_FIELD_POWER1;
         me.values.set!UNIT_FIELD_POWER1(cost >= mana ? 0 : mana - cost);
+        if (cost)
+            manaUsedAgo = 0; // the five seconds without mana coming back begin (`regenerate`)
     }
 
     /// Within the spell's range of its target (and out of its minimum).
