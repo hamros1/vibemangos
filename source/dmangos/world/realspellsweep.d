@@ -903,7 +903,16 @@ private struct Sweeper
                 if (!isNaN(measuredBefore[i]) && effect != persistentAreaAura)
                     if (auto on = unit.kind == UnitKind.player ? unit.session.player.auras.find(s.id)
                             : unit.kind == UnitKind.creature ? unit.creature.auras.find(s.id) : null)
-                        if (on.amount[i] != 0)
+                    {
+                        if (isImmunityMeasure(cast(AuraType) s.casting.applyAuraName[i]))
+                        {
+                            // An immunity whatever its amount: not immune before (else nothing to see), immune now.
+                            const now = auraMeasureOn(unit, cast(AuraType) s.casting.applyAuraName[i], s.miscValue[i]);
+                            if (measuredBefore[i] == 0 && now != 1)
+                                problem(format!"effect %s (%s %s): on the %s, but it is not immune (misc %s)"(i, effect,
+                                    s.casting.applyAuraName[i], who, s.miscValue[i]));
+                        }
+                        else if (on.amount[i] != 0)
                         {
                             const now = auraMeasureOn(unit, cast(AuraType) s.casting.applyAuraName[i], s.miscValue[i]);
                             // (A resistance of none goes no lower: Curse of the Elements at a creature without one.)
@@ -916,6 +925,7 @@ private struct Sweeper
                                     effect, s.casting.applyAuraName[i], who, auraMeasureName(
                                     cast(AuraType) s.casting.applyAuraName[i]), on.amount[i], now));
                         }
+                    }
                 const expected = expectedDuration(*s, context.client, comboPointsUsed);
                 // A persistent area's lasts what the area has left as one comes in (its first tick's).
                 const early = effect == persistentAreaAura ? 2 * max(1000, s.casting.amplitude[i]) + 100 : 0;
@@ -1496,6 +1506,8 @@ float auraMeasure(Character who, AuraType type, int misc)
 
         return p.speeds[MoveType.run];
     }
+    case schoolImmunity, mechanicImmunity, modMechanicResistance:
+        return fighterMeasure(who.unit.fighter, type, misc);
     case modSkill, modSkillTalent: // a skill it has (a weapon's, a profession's): its value with bonuses
         return misc > 0 && p.skillSlot(misc) >= 0 ? p.skillWithBonus(misc) : float.nan;
     case modScale: // its size (Enlarge, a giant's growth)
@@ -1541,6 +1553,8 @@ float auraMeasureOn(UnitRef unit, AuraType type, int misc)
 
         return c.values.get!OBJECT_FIELD_SCALE_X;
     }
+    case schoolImmunity, mechanicImmunity, modMechanicResistance:
+        return fighterMeasure(f, type, misc);
     case modHitChance:
         return f.hitBonus;
     case modCritPercent:
@@ -1565,6 +1579,28 @@ float auraMeasureOn(UnitRef unit, AuraType type, int misc)
 }
 
 /// What `auraMeasure` measures of `type`, for the sweep's report.
+/// The immunities the oracle checks as on or off (1 or 0), not by their amount (`fighterMeasure`).
+bool isImmunityMeasure(AuraType type)
+{
+    return type == AuraType.schoolImmunity || type == AuraType.mechanicImmunity;
+}
+
+/// What a fighter shows of an immunity (1 immune to all of `misc`'s, 0 not) or of a mechanic's resist chance.
+float fighterMeasure(F)(auto ref const F f, AuraType type, int misc)
+{
+    with (AuraType) switch (type)
+    {
+    case schoolImmunity:
+        return misc > 0 ? ((f.immune.schools & misc) == misc ? 1 : 0) : float.nan;
+    case mechanicImmunity:
+        return misc > 0 && misc <= 32 ? ((f.immune.mechanics & (1u << (misc - 1))) ? 1 : 0) : float.nan;
+    case modMechanicResistance:
+        return misc > 0 && misc < f.mechanicResist.length ? f.mechanicResist[misc] : float.nan;
+    default:
+        return float.nan;
+    }
+}
+
 string auraMeasureName(AuraType type)
 {
     with (AuraType) switch (type)
@@ -1593,6 +1629,8 @@ string auraMeasureName(AuraType type)
     case modIncreaseSpeed, modSpeedAlways, modSpeedNotStack, modDecreaseSpeed: return "its run speed";
     case modSkill, modSkillTalent: return "its skill";
     case modScale: return "its size";
+    case schoolImmunity, mechanicImmunity: return "its immunity";
+    case modMechanicResistance: return "its resistance to the mechanic";
     default: return "nothing";
     }
 }
