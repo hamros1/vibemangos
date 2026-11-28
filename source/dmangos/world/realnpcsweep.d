@@ -35,12 +35,12 @@ import dmangos.world.creature : Creature, TempSpawnType;
 import dmangos.world.movement : Position;
 import dmangos.world.opcodes : Opcode;
 import dmangos.world.realspelltests : haveRealData, RealWorld;
-import dmangos.world.realspellsweep : harms, hasDispellable, objectNear, summoned, summonsCreature, summonsObject,
-    Who, whoOf;
+import dmangos.world.realspellsweep : auraMeasureName, auraMeasureOn, harms, hasDispellable, objectNear, summoned,
+    summonsCreature, summonsObject, Who, whoOf;
 import dmangos.world.spellids : AuraType, ImplicitTarget, SpellEffect;
 import dmangos.world.spells : SpellInfo;
 import dmangos.world.testclient : TestClient;
-import dmangos.world.unit : UnitRef;
+import dmangos.world.unit : UnitKind, UnitRef;
 import dmangos.world.updatefields;
 import dmangos.world.worlddata : WorldData;
 
@@ -692,9 +692,12 @@ private final class NpcSweeper
         const all = [Who.caster, Who.enemy, Who.friend];
         uint[3] healthOf, powerOf;
         bool[3] dispellableBefore;
+        float[3] measuredBefore = float.nan; // what each aura should change (`auraMeasureOn`), before it
         foreach (i; 0 .. 3)
             if (auto unit = unitOf(who(i)))
             {
+                if (s.effect[i] == SpellEffect.applyAura)
+                    measuredBefore[i] = auraMeasureOn(unit, cast(AuraType) s.casting.applyAuraName[i], s.miscValue[i]);
                 healthOf[i] = unit.fields.get!UNIT_FIELD_HEALTH;
                 const power = s.effect[i] == SpellEffect.energize ? s.miscValue[i] : 0;
                 if (power >= 0 && power < 5)
@@ -977,6 +980,26 @@ private final class NpcSweeper
                     failed = format!"aura %s: on the %s, no damage"(kind, name);
                 else if (kind == AuraType.transform && !displayChanged && !intoOwnLook(i, x))
                     failed = format!"aura %s: on the %s, its look unchanged"(kind, name);
+                else
+                {
+                    // What it does, where the sweep measures it (as the learnable-spell sweep does).
+                    import std.math : isNaN;
+
+                    if (!isNaN(measuredBefore[i]))
+                        if (auto on = unit.kind == UnitKind.player ? unit.session.player.auras.find(s.id)
+                                : unit.kind == UnitKind.creature ? unit.creature.auras.find(s.id) : null)
+                            if (on.amount[i] != 0)
+                            {
+                                const now = auraMeasureOn(unit, kind, s.miscValue[i]);
+                                // (A resistance of none goes no lower; a negative `MOD_SPEED_ALWAYS` slows nothing, as in
+                                // CMaNGOS's `UpdateSpeed`, whose bonus is the larger of it and the non-stacking one.)
+                                const floor = (kind == AuraType.modResistance && on.amount[i] < 0 && measuredBefore[i] <= 0)
+                                    || (kind == AuraType.modSpeedAlways && on.amount[i] < 0);
+                                if (!floor && (on.amount[i] > 0 ? now <= measuredBefore[i] : now >= measuredBefore[i]))
+                                    failed = format!"aura %s: on the %s, but %s did not move by %s (still %s)"(kind, name,
+                                        auraMeasureName(kind), on.amount[i], now);
+                            }
+                }
                 break;
             case persistentAreaAura:
                 if (!areaSeen && !(unit && auraSeen[i].get(x, false)))

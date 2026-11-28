@@ -907,8 +907,10 @@ private struct Sweeper
                         {
                             const now = auraMeasureOn(unit, cast(AuraType) s.casting.applyAuraName[i], s.miscValue[i]);
                             // (A resistance of none goes no lower: Curse of the Elements at a creature without one.)
-                            const floor = cast(AuraType) s.casting.applyAuraName[i] == AuraType.modResistance
-                                && on.amount[i] < 0 && measuredBefore[i] <= 0;
+                            // (A negative `MOD_SPEED_ALWAYS` slows nothing either: CMaNGOS's `UpdateSpeed`.)
+                            const auraKind = cast(AuraType) s.casting.applyAuraName[i];
+                            const floor = (auraKind == AuraType.modResistance && on.amount[i] < 0 && measuredBefore[i] <= 0)
+                                || (auraKind == AuraType.modSpeedAlways && on.amount[i] < 0);
                             if (!floor && (on.amount[i] > 0 ? now <= measuredBefore[i] : now >= measuredBefore[i]))
                                 problem(format!"effect %s (%s %s): on the %s, but %s did not move by %s (still %s)"(i,
                                     effect, s.casting.applyAuraName[i], who, auraMeasureName(
