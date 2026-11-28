@@ -45,7 +45,6 @@ import dmangos.world.unit : combatRelations, UnitKind, UnitRef;
 enum float assistanceRadius = 5;
 enum int assistanceDelay = 1500; /// ditto
 enum float checkForHelpRadius = 5; /// ditto
-private enum uint inhabitWater = 2; /// `InhabitType`: it can swim
 
 /// `CREATURE_EXTRA_FLAG_NO_CALL_ASSIST`: it does not call for help when it starts fighting.
 enum uint extraFlagNoCallAssist = 0x800;
@@ -270,11 +269,6 @@ final class CreatureAI : Scripted, CreatureHost, ScourgeCampHost
         const self = relating, other = who.relating;
         if (!canAttack(self, other, me.client) || !isEnemy(self, other, me.client))
             return;
-        // Only one where it can follow (CMaNGOS's `isInAccessablePlaceFor`): a swimmer if it can swim, one out of
-        // the water if it walks or flies. (CMaNGOS's "in water" is any liquid under the target, a bridge's river
-        // too; here it is swimming.)
-        if (swimmingNow(who) ? !(me.template_.inhabitType & inhabitWater) : me.waterOnly)
-            return;
         // Within the aggro radius and in sight.
         const radius = attackDistance(target);
         const dx = me.position.x - target.position.x, dy = me.position.y - target.position.y,
@@ -309,18 +303,6 @@ final class CreatureAI : Scripted, CreatureHost, ScourgeCampHost
             attackStart(who, world);
         else if ((who.combatGuid in threat) is null)
             addThreat(who, 0);
-    }
-
-    private static bool swimmingNow(UnitRef who)
-    {
-        import dmangos.world.movement : MovementFlags;
-
-        final switch (who.kind)
-        {
-        case UnitKind.none: return false;
-        case UnitKind.player: return who.session.player !is null && who.session.player.movement.has(MovementFlags.swimming);
-        case UnitKind.creature: return who.creature.movement.has(MovementFlags.swimming);
-        }
     }
 
     /**
@@ -2041,50 +2023,4 @@ unittest
     keeper.ai.enterEvadeMode(map);
     keeper.ai.regenerate(map, 5000);
     assert(keeper.values.get!UNIT_FIELD_POWER1 == 50 + 333, format!"a third out of it: %s"(keeper.values.get!UNIT_FIELD_POWER1));
-}
-
-// Aggro on sight only of one where it can follow (CMaNGOS's `isInAccessablePlaceFor`): a creature of the land alone
-// leaves a swimmer be, one of the water alone a walker.
-unittest
-{
-    import dmangos.dbc : buildDbc;
-    import dmangos.world.clientdata : factionTemplateFormat;
-    import dmangos.world.creature : Creature, CreatureTemplate;
-    import dmangos.world.movement : MovementFlags, Position;
-    import dmangos.world.objects : HighGuid, makeGuid;
-    import dmangos.world.testclient;
-    import dmangos.world.testdata;
-    import dmangos.world.updatefields;
-
-    auto db = newDatabase();
-    auto context = newCreationContext(db);
-    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f));
-    anduin.read();
-    auto map = context.map(0);
-    auto keeper = cast(Creature) map.findObject(makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn));
-    enum uint players = 1, monsters = 8;
-    const humans = anduin.session.character.values.get!UNIT_FIELD_FACTIONTEMPLATE;
-    context.client.factionTemplates = typeof(context.client.factionTemplates).parse(buildDbc(factionTemplateFormat,
-        [[humans, 1, 0, players | 2, 2, monsters, 0, 0, 0, 0, 0, 0, 0, 0], [14u, 14, 0, monsters, 0, players, 0, 0, 0,
-        0, 0, 0, 0, 0]]), "FactionTemplate.dbc");
-    keeper.factionTemplate = context.client.factionTemplates.lookup(14);
-    keeper.ai.react = ReactState.aggressive;
-    auto own = new CreatureTemplate;
-    *own = *keeper.template_;
-    own.detection = 20;
-    keeper.template_ = own;
-    auto me = anduin.session.inWorld.player;
-    bool aggroes(uint inhabit, bool swimming)
-    {
-        own.inhabitType = inhabit;
-        if (swimming)
-            me.movement.flags |= MovementFlags.swimming;
-        else
-            me.movement.flags &= ~MovementFlags.swimming;
-        keeper.ai.moveInLineOfSight(map.unit(me.guid), map);
-        return keeper.ai.inCombat;
-    }
-    assert(!aggroes(1, true), "of the land alone: not a swimmer");
-    assert(!aggroes(2, false), "of the water alone: not a walker");
-    assert(aggroes(3, true), "of both: a swimmer too");
 }

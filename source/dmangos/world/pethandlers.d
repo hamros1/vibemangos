@@ -1282,7 +1282,8 @@ mixin template PetHandlers()
     }
 
     /**
-     * A kill's experience for the hunter pet, of its own level (CMaNGOS's `XP::Gain(pet, victim)`) on a kill of
+     * A kill's experience for the hunter pet, of its own level (patch 1.7.0: "Hunter pets now gain experience based
+     * on the level difference between them and their target"; CMaNGOS's `XP::Gain(pet, victim)` too) on a kill of
      * `value`: all of it alone (`share` 1), or in a group the share its owner had of the kill (`halved`: the half
      * and one of a group whose highest member is grey to the kill).
      */
