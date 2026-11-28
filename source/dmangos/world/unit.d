@@ -286,6 +286,13 @@ struct UnitRef
         }
     }
 
+    /// `target` died with an aura this unit cast on it.
+    void auraDiedWith(Creature target, Aura aura)
+    {
+        if (kind == UnitKind.player)
+            session.classCreatureDiedWith(target, aura);
+    }
+
     /// An aura this unit cast on `target` ended.
     void auraEndedOn(Creature target, Aura aura)
     {

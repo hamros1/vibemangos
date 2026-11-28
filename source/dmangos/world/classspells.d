@@ -1068,6 +1068,33 @@ mixin template ClassSpells()
         return 0;
     }
 
+    /**
+     * `target` died under this player's aura: under its Curse of Doom, one time in twenty the warlock's spell (18662,
+     * `spell_curse_of_doom`: "`urand(0, 100) > 95`") calls a Doomguard (11859) beside it, a demon of its own, at the
+     * warlock's level, for an hour or until slain (CMaNGOS's `EffectSummonDemon`).
+     */
+    package void classCreatureDiedWith(Creature target, Aura aura)
+    {
+        import std.random : uniform;
+        import dmangos.world.creature : TempSpawnType;
+
+        enum uint curseOfDoom = 603, doomEffect = 18662;
+        if (aura.spell.id != curseOfDoom || player is null || !player.alive || uniform!"[]"(0, 100, map.random) <= 95)
+            return;
+        const effect = context.data.spells.spell(doomEffect);
+        if (effect is null || effect.effect[0] != SpellEffect.summonDemon || !effect.miscValue[0])
+            return;
+        auto at = target.position;
+        if (auto demon = context.summonCreature(map, cast(uint) effect.miscValue[0], at, TempSpawnType.timedOrDead,
+                3_600_000, player.guid))
+        {
+            import dmangos.world.updatefields : UNIT_FIELD_LEVEL;
+
+            demon.values.set!UNIT_FIELD_LEVEL(player.data.level);
+            map.flushCreature(demon);
+        }
+    }
+
     /// This player's aura on `target` ended: Wyvern Sting's sleep leaves its poison.
     package void classCreatureAuraLost(Creature target, Aura aura)
     {

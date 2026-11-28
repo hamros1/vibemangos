@@ -1310,6 +1310,51 @@ unittest
     assert(opcodesOf(a.hero.read()).canFind(Opcode.SMSG_PERIODICAURALOG));
 }
 
+/// A creature slain under Curse of Doom: now and then (one time in twenty) a Doomguard comes, 18662's demon, of the
+/// warlock's level; mostly none (`spell_curse_of_doom`). Fixed seeds, tried in turn until both are seen.
+unittest
+{
+    import std.algorithm.iteration : filter;
+    import std.algorithm.searching : count;
+    import std.random : Random;
+    import dmangos.world.auras : AuraType;
+    import dmangos.world.testdata : creatureInnkeeper;
+    import dmangos.world.unit : Blow, dealDamage;
+    import dmangos.world.updatefields;
+
+    size_t demons, none;
+    foreach (uint seed; 0 .. 400)
+    {
+        auto a = new Arena;
+        auto doom = a.spell(603, SpellEffect.applyAura, ImplicitTarget.enemy, 100);
+        doom.casting.applyAuraName[0] = AuraType.periodicDamage;
+        doom.casting.amplitude[0] = 60_000;
+        doom.casting.durationIndex = 1;
+        auto effect = a.spell(18662, SpellEffect.summonDemon, ImplicitTarget.caster, 1);
+        effect.miscValue[0] = creatureInnkeeper; // (the test data's creature, for the Doomguard)
+        a.cast_(603, a.keeper.guid);
+        assert(a.keeper.auras.find(603) !is null);
+        a.keeper.values.set!UNIT_FIELD_HEALTH(1u);
+        a.map.random = Random(seed);
+        dealDamage(a.map.unit(a.me.guid), a.map.unitOf(a.keeper), 10, Blow.periodic(0));
+        assert(!a.keeper.alive, "slain");
+        auto risen = a.map.creaturesNear(a.keeper.position, 30)
+            .filter!(c => c.template_.entry == creatureInnkeeper && c.alive && c !is a.keeper);
+        const n = risen.count;
+        assert(n <= 1, "one Doomguard at most");
+        if (n == 1)
+        {
+            assert(risen.front.values.get!UNIT_FIELD_LEVEL == 60, "of the warlock's level");
+            ++demons;
+        }
+        else
+            ++none;
+        if (demons && none > 5)
+            break;
+    }
+    assert(demons >= 1 && none > 5 * demons, "now and then a Doomguard, mostly none");
+}
+
 /// A health funnel (Blood Siphon, 24322: a raider's blood into Hakkar): each tick its caster loses the amount, and
 /// the creature it is on is healed by as much (CMaNGOS's `PERIODIC_HEALTH_FUNNEL`, a leech the other way round).
 unittest

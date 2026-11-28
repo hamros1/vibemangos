@@ -1499,8 +1499,14 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
             loot.sendReleaseForAll(); // close a pickpocketing window before generating body loot
             loot = null;
         }
-        foreach (aura; auras.list.dup) // every aura goes on death
+        auto map = cast(Map) world;
+        foreach (aura; auras.list.dup) // every aura goes on death; its caster's class rules hear of it (Curse of Doom)
+        {
             auras.remove(aura, values);
+            if (map !is null)
+                if (auto caster = map.unit(aura.caster))
+                    caster.auraDiedWith(this, aura);
+        }
         expiredChannels = null;
         values.set!UNIT_NPC_FLAGS(0u);
         stopMoving(this, world);
