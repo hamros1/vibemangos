@@ -542,6 +542,23 @@ and patch 5.0.4 (Warcraft Wiki "Dodge", oldid 6594641): "Ranged attacks can now 
 changed:** an Auto Shot could be dodged (`rollMeleeOutcome` asked no attack type) while Aimed Shot could not.
 CMaNGOS-classic: `CanDodgeAbility` melee abilities only, `CanDodgeInCombat` for swings and shots alike, as dmangos had.
 
+## Rage
+
+**What:** the rage a warrior's melee swing earns (combathandlers.d `swingRage`, combat.d `rageReward`).
+
+**Sources.** Kalgan's blue post gives the pre-2.0.10 rule: rage = 7.5 × damage / C, with the rage conversion value
+C = 0.0091107836 × level² + 3.225598133 × level + 4.2652911 (230.6 at level 60). The Classic Era simulators use it
+(WarriorSim, `js/classes/player.js`: `this.rage += (dmg / this.rageconversion) * 7.5`; ClassicSim), and the Classic
+warrior compendium (ppach-warriorcompendium, "Rage Generation") notes that an older guide's 15 doubled Classic's rage.
+Patch 1.3.0 (2005-03-07): "Fixed a bug where rage was not being generated when normal melee attacks were parried,
+dodged, and blocked." No Blizzard number for such a swing was found; WarriorSim gives a dodged white swing the rage of
+75% of an average hit (`(weapon.avgdmg() / this.rageconversion) * 7.5 * 0.75`).
+
+**Rule:** a swing that lands earns 7.5 × its damage / C; one dodged or parried 75% of what the hand's average damage
+would (the parry by the same patch note, at the dodge's amount); a miss none. A block earns by the damage left.
+**What changed:** dodged and parried swings earned nothing. The rage from damage taken (2.5 × damage / C) is
+unchanged; no source for it was found beyond the same formula's emulator copies.
+
 ## Spell resistance
 
 **What:** a hostile spell's chance to be resisted whole, and the share of a direct-damage spell resisted

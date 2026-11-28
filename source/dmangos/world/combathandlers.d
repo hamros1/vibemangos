@@ -330,6 +330,23 @@ private:
         attackTimer[hand] = parryHasted(attackTimer[hand], player.stats.attackTime[hand]);
     }
 
+    /**
+     * The rage (tenths) a warrior's swing earns: the damage it dealt over the level's rage conversion, times 7.5
+     * (Kalgan's blue post, as the Classic Era simulators WarriorSim and ClassicSim have it; docs/FORMULAS.md
+     * "Rage"). One dodged or parried earns rage too (patch 1.3.0: "Fixed a bug where rage was not being generated
+     * when normal melee attacks were parried, dodged, and blocked"): three quarters of an average hit's, as
+     * WarriorSim has it for a dodge (no Blizzard number found).
+     */
+    package uint swingRage(const MeleeDamage d, AttackType type)
+    {
+        if (d.outcome == MeleeHitOutcome.dodge || d.outcome == MeleeHitOutcome.parry)
+        {
+            const average = (player.stats.damage[type].min + player.stats.damage[type].max) / 2;
+            return rageReward(player.data.level, cast(uint) average, true) * 3 / 4;
+        }
+        return rageReward(player.data.level, d.damage, true);
+    }
+
     /// A melee swing at a player.
     void swingAtPlayer(typeof(this) other, AttackType type)
     {
@@ -344,7 +361,7 @@ private:
         map.sendToWatchers(this, Opcode.SMSG_ATTACKERSTATEUPDATE, attackerStateUpdate(d), true);
         enterCombatFor(combatLinger);
         if (player.powerType == Power.rage && type != AttackType.ranged)
-            player.modifyPower(Power.rage, rageReward(player.data.level, d.damage, true));
+            player.modifyPower(Power.rage, swingRage(d, type));
         flushPlayerChanges();
         dealDamage(unit, other.unit, d.damage, Blow.swing(d));
         if (d.damage && other.player !is null && other.player.alive)
@@ -599,7 +616,7 @@ private:
         }
         // Rage from weapon damage dealt, then the damage.
         if (player.powerType == Power.rage && type != AttackType.ranged)
-            player.modifyPower(Power.rage, rageReward(player.data.level, d.damage, true));
+            player.modifyPower(Power.rage, swingRage(d, type));
         flushPlayerChanges();
         // The creature fights back, takes it as threat, and may die of it.
         dealDamage(unit, target, d.damage, Blow.swing(d));
@@ -1482,4 +1499,34 @@ unittest
     assert(removed.canFind(targetCell), "evading releases the fight's interest");
     to.peerInterest(1, added, removed);
     assert(!from.isReplica(playerGuid));
+}
+
+// A warrior's swing earns rage by its damage (7.5 x damage / conversion); one dodged or parried three quarters of an
+// average hit's (patch 1.3.0; WarriorSim's amount); a miss none.
+unittest
+{
+    import dmangos.world.combat : AttackType, MeleeDamage, MeleeHitOutcome, rageReward;
+    import dmangos.world.movement : Position;
+    import dmangos.world.testclient;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f));
+    auto me = anduin.session.inWorld;
+    const level = me.player.data.level;
+    MeleeDamage hit;
+    hit.outcome = MeleeHitOutcome.normal;
+    hit.damage = 20;
+    assert(me.swingRage(hit, AttackType.mainHand) == rageReward(level, 20, true));
+    const range = me.player.stats.damage[AttackType.mainHand];
+    const average = cast(uint)((range.min + range.max) / 2);
+    assert(average > 0);
+    MeleeDamage dodged;
+    dodged.outcome = MeleeHitOutcome.dodge;
+    assert(me.swingRage(dodged, AttackType.mainHand) == rageReward(level, average, true) * 3 / 4);
+    dodged.outcome = MeleeHitOutcome.parry;
+    assert(me.swingRage(dodged, AttackType.mainHand) == rageReward(level, average, true) * 3 / 4);
+    MeleeDamage missed;
+    missed.outcome = MeleeHitOutcome.miss;
+    assert(me.swingRage(missed, AttackType.mainHand) == 0);
 }
