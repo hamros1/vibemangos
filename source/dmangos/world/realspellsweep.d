@@ -1488,6 +1488,12 @@ float auraMeasure(Character who, AuraType type, int misc)
         return sum;
     case modMeleeHaste, modAttackSpeed: // faster: less time between swings
         return -cast(float) p.stats.attackTime[0];
+    case modIncreaseSpeed, modSpeedAlways, modSpeedNotStack, modDecreaseSpeed: // its run (Sprint, Hamstring)
+    {
+        import dmangos.world.movement : MoveType;
+
+        return p.speeds[MoveType.run];
+    }
     case modRangedHaste: // a ranged weapon's speed: none worn (Rapid Fire asks for none), nothing to see
     {
         import dmangos.world.defines : equipmentSlotRanged;
@@ -1527,6 +1533,12 @@ float auraMeasureOn(UnitRef unit, AuraType type, int misc)
         return -cast(float) c.values.get!UNIT_FIELD_BASEATTACKTIME(0);
     case modAttackPower: // its blows (Demoralizing Shout)
         return f.damage[0][1];
+    case modDecreaseSpeed, modIncreaseSpeed: // its run (Hamstring, Frostbolt's chill)
+    {
+        import dmangos.world.movement : MoveType;
+
+        return c.speeds[MoveType.run];
+    }
     case modDamagePercentDone:
         return misc & 1 ? f.damageDone[0] : float.nan;
     default:
@@ -1560,6 +1572,7 @@ string auraMeasureName(AuraType type)
     case modPercentStat, modTotalStatPercentage: return "its stat";
     case modMeleeHaste, modAttackSpeed: return "its swing speed";
     case modRangedHaste: return "its ranged speed";
+    case modIncreaseSpeed, modSpeedAlways, modSpeedNotStack, modDecreaseSpeed: return "its run speed";
     default: return "nothing";
     }
 }

@@ -1050,12 +1050,14 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         refreshAuraStats(); // its armor, resistances and attack power at once (Sunder Armor's next blow)
         // Its crowd control at once (CMaNGOS's `SetStunned` as the aura lands), not at its next tick: a stun of a
         // tenth of a second (Arcane Explosion's on its caster) would run out first.
-        // So are its attack and cast times (Thunder Clap, Chilled: CMaNGOS's `ApplyAttackTimePercentMod` as it lands).
+        // So are its attack and cast times and speeds (Thunder Clap, Chilled, Hamstring: CMaNGOS's
+        // `ApplyAttackTimePercentMod`, `UpdateSpeed` as it lands).
         with (AuraType)
             if (isNew && (applied.has(modStun) || applied.has(modFear) || applied.has(modConfuse) || applied.has(modSilence)
                     || applied.has(modPacify) || applied.has(modDisarm) || applied.has(modRoot)
                     || applied.has(modMeleeHaste) || applied.has(modAttackSpeed) || applied.has(modRangedHaste)
-                    || applied.has(modCastingSpeed)))
+                    || applied.has(modCastingSpeed) || applied.has(modDecreaseSpeed) || applied.has(modIncreaseSpeed)
+                    || applied.has(modSpeedAlways) || applied.has(modSpeedNotStack)))
                 if (auto motion = cast(MotionWorld) world)
                     refreshAuraMovement(motion);
         return applied;
