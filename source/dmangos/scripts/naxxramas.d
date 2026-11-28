@@ -2962,6 +2962,16 @@ struct ChainsOfKelthuzad
     }
 }
 
+/// Chains of Kel'Thuzad's charm (28410) went from a raider, its time up or broken: its scale (28409) goes with it.
+@spell("spell_chains_kel_thuzad_charm") @spellIds(28_410)
+struct ChainsOfKelthuzadCharm
+{
+    void on(ref SpellContext it, const ref AuraEnded e)
+    {
+        it.removeAura(e.target, 28_409);
+    }
+}
+
 /**
  * Kel'Thuzad: summons the dead from his alcoves for five minutes while he channels; then fights with
  * Frostbolt, Frost Bolt Nova, Mana Detonation, Shadow Fissure and Frost Blast; below 40% the Lich King

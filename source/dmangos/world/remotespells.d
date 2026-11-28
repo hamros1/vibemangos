@@ -266,14 +266,8 @@ final class RemoteSpells
         else if (animation >= 0)
             map_.sendToObservers(object.guid, Opcode.SMSG_GAMEOBJECT_CUSTOM_ANIM,
                 gameObjectAnimation(object.guid, cast(uint) animation));
-        else if (spell.id == 19873)
-        {
-            auto dragon = map_.creatureAt(casterGuid);
-            if (dragon is null || dragon.spawn.entry != 12435 || !dragon.petOwner || !dragon.alive
-                || map_.id != 469 || object.spawn.entry != 177807)
-                return false;
+        else if (world.scripts.rule(spell.id).usesNamedObject)
             world.objectScripts.gameObjectUsed(object, map_, casterGuid);
-        }
         else if (spell.miscValue[effect] == GameObjectAction.disturb)
         {
             // A trap: its spell; a button (Celebras's staff): used.

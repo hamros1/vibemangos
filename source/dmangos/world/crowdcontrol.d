@@ -66,9 +66,6 @@ final class CrowdControl
         else if (npcCharmer && npcCharmer == aura.caster)
         {
             npcCharmer = 0;
-            if (aura.spell.id == 28410)
-                if (auto scale = me.player.auras.find(28409))
-                    me.removeAura(scale);
             me.player.values.set!UNIT_FIELD_CHARMEDBY(0UL);
             me.player.values.set!UNIT_FIELD_FACTIONTEMPLATE(factionBeforeCharm);
             me.stopAttack(false);

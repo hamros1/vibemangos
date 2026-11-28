@@ -84,6 +84,7 @@ private enum uint shadowOfEbonroc = 23340, flameBuffet = 23341, flamegorFrenzy =
 /// The auras of the lair's fights a gateway player's checkpoint keeps (`SpellRule`): Shadow of Ebonroc, Flame
 /// Buffet, and Chromaggus' brood afflictions with what five of them make of a player.
 immutable SpellRule[] spellRules = [
+    SpellRule(19_873, usesNamedObject: true), // Destroy Egg, Razorgore's under the Orb of Domination
     SpellRule(shadowOfEbonroc, keptThroughCrash: true),
     SpellRule(flameBuffet, keptThroughCrash: true),
     SpellRule(Chromaggus.afflictions[0], keptThroughCrash: true),

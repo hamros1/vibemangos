@@ -1558,6 +1558,10 @@ struct SpellRule
 
     /// A creature's area of it reaches one of those in it, at random (Kurinnaxx's Sand Trap: one player).
     bool areaOneAtRandom;
+
+    /// Its effect at a game object the spell names (`spell_script_target`) uses that object as its caster would,
+    /// the object's scripts to decide what it does (Razorgore's Destroy Egg: an egg he breaks).
+    bool usesNamedObject;
 }
 
 /**
