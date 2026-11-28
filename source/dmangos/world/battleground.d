@@ -16,6 +16,8 @@ module dmangos.world.battleground;
 import core.time : Duration, MonoTime, minutes, msecs, seconds;
 
 import dmangos.bytes : ByteReader, ByteWriter;
+import dmangos.protocol.chat : chatPacket;
+import dmangos.protocol.packet : Packet;
 import dmangos.world.bgqueue;
 import dmangos.world.characterdb : NameInfo;
 import dmangos.world.database : BattlegroundReward, PvpStatsBattleground, PvpStatsPlayer;
@@ -56,14 +58,6 @@ enum int joinedDeserter = -2;
 
 /// The number of extra scoreboard columns of each battleground.
 immutable uint[4] extraScores = [0, 7, 2, 2];
-
-/// A system message of a battleground (`CHAT_MSG_BG_SYSTEM_*`), as `SMSG_MESSAGECHAT`'s body.
-ubyte[] battlegroundMessage(ChatType type, string text, ulong source = 0)
-{
-    import dmangos.world.queries : chatMessage;
-
-    return chatMessage(type, Language.LANG_UNIVERSAL, source, text);
-}
 
 /// A graveyard's side for `Battleground.graveyardTeams` (the team's faction id), and closed.
 enum uint teamAllianceLink = 469, teamHordeLink = 67, teamInvalidLink = 1;
@@ -1409,25 +1403,25 @@ final class Battleground
         if (text is null)
             return;
         const formatted = formatServerString(*text, args);
-        const local = battlegroundMessage(chatType, formatted, source);
+        const local = chatPacket(chatType, Language.LANG_UNIVERSAL, source, formatted);
         if (context.battlegroup is null || !source || !formatted.canFind("$n"))
-            return toAll(Opcode.SMSG_MESSAGECHAT, local);
+            return toAll(local);
 
         // The client expands $n to the bare character name in battleground system messages.
-        const(ubyte)[] foreign;
+        Packet foreign;
         foreach (guid, ref member; members)
             if (member.offlineSince == MonoTime.init)
                 if (auto who = memberSession(guid))
                 {
                     if (const name = foreignChatName(guid, source))
                     {
-                        if (foreign is null)
-                            foreign = battlegroundMessage(chatType,
-                                formatted.replace("$n", name), source);
-                        who.deliver(Opcode.SMSG_MESSAGECHAT, foreign);
+                        if (foreign.body_ is null)
+                            foreign = chatPacket(chatType, Language.LANG_UNIVERSAL, source,
+                                formatted.replace("$n", name));
+                        who.deliver(foreign);
                     }
                     else
-                        who.deliver(Opcode.SMSG_MESSAGECHAT, local);
+                        who.deliver(local);
                 }
     }
 
@@ -1443,6 +1437,12 @@ final class Battleground
     }
 
     /// A packet to every player in it (not those logged out).
+    void toAll(const imported!"dmangos.protocol.packet".Packet packet)
+    {
+        toAll(packet.opcode, packet.body_);
+    }
+
+    /// ditto
     void toAll(Opcode opcode, const(ubyte)[] body_)
     {
         foreach (guid, ref m; members)
@@ -1452,6 +1452,12 @@ final class Battleground
     }
 
     /// A packet to the players of `team`, but `except`.
+    void toTeam(ubyte team, const imported!"dmangos.protocol.packet".Packet packet, ulong except = 0)
+    {
+        toTeam(team, packet.opcode, packet.body_, except);
+    }
+
+    /// ditto
     void toTeam(ubyte team, Opcode opcode, const(ubyte)[] body_, ulong except = 0)
     {
         foreach (guid, ref m; members)
@@ -1466,14 +1472,13 @@ final class Battleground
      */
     void teamChat(ulong sender, ChatType chatType, Language language, string text, ubyte chatTag)
     {
-        import dmangos.world.queries : chatMessage;
 
         auto m = sender in members;
         if (m is null)
             return;
         if (chatType == ChatType.CHAT_MSG_BATTLEGROUND_LEADER && leaderOf(m.team) != sender)
             chatType = ChatType.CHAT_MSG_BATTLEGROUND;
-        toTeam(m.team, Opcode.SMSG_MESSAGECHAT, chatMessage(chatType, language, sender, text, chatTag));
+        toTeam(m.team, chatPacket(chatType, language, sender, text, chatTag));
     }
 
     /// The team's leader: the one there longest.
@@ -2854,7 +2859,7 @@ mixin template BattlegroundHandlers()
         void refuse(uint stringId)
         {
             if (const text = stringId in context.data.serverStrings)
-                deliver(Opcode.SMSG_MESSAGECHAT, battlegroundMessage(ChatType.CHAT_MSG_BG_SYSTEM_NEUTRAL, *text));
+                deliver(chatPacket(ChatType.CHAT_MSG_BG_SYSTEM_NEUTRAL, Language.LANG_UNIVERSAL, 0, *text));
         }
         if (group.members.length > t.maxPerTeam)
             return refuse(tooLarge);

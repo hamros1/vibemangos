@@ -696,6 +696,12 @@ final class Group
      * A packet to every member online, or those of one sub-group, except
      * `except`.
      */
+    void broadcast(const imported!"dmangos.protocol.packet".Packet packet, int subGroup = -1, ulong except = 0)
+    {
+        broadcast(packet.opcode, packet.body_, subGroup, except);
+    }
+
+    /// ditto
     void broadcast(Opcode opcode, const(ubyte)[] body_, int subGroup = -1, ulong except = 0)
     {
         foreach (ref slot; slots)
@@ -1229,6 +1235,7 @@ version (unittest)
 
         @property const(Player) character() const { return player; }
         void deliver(Opcode opcode, const(ubyte)[] body_) { received ~= opcode; bodies ~= body_.dup; }
+        void deliver(const imported!"dmangos.protocol.packet".Packet packet) { deliver(packet.opcode, packet.body_); }
         UpdateData appearanceFor(const Inhabitant viewer, uint serverTime) const
         {
             return player.createForOthers(serverTime, false);

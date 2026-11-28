@@ -20,7 +20,7 @@ import dmangos.world.gmtargets : GmRemoteOp;
 import dmangos.world.inventory : ItemState;
 import dmangos.world.opcodes : ChatType, Language, Opcode;
 import dmangos.world.player : DeathState;
-import dmangos.world.queries : chatMessage, monsterChatMessage;
+import dmangos.protocol.chat : chatPacket, monsterChatPacket;
 import dmangos.world.spellcast : SpellTargets, TargetFlags;
 import dmangos.world.spells : SpellInfo;
 import dmangos.world.updatefields;
@@ -939,15 +939,13 @@ bool monsterChat(Character gm, string text, bool yell)
     {
         const range = yell ? gm.context.config.listenRangeYell : gm.context.config.listenRangeSay;
         const type = yell ? ChatType.CHAT_MSG_MONSTER_YELL : ChatType.CHAT_MSG_MONSTER_SAY;
-        gm.map.sendInRange(creature.position, range, Opcode.SMSG_MESSAGECHAT,
-            monsterChatMessage(type, creature.guid, creature.template_.name, text));
+        gm.map.sendInRange(creature.position, range, monsterChatPacket(type, creature.guid, creature.template_.name, text));
         return true;
     }
     if (auto speaker = gm.selectedCharacter(false))
     {
-        const message = chatMessage(yell ? ChatType.CHAT_MSG_YELL : ChatType.CHAT_MSG_SAY,
-            Language.LANG_UNIVERSAL, speaker.player.guid, text);
-        speaker.map.sendToWatchers(speaker, Opcode.SMSG_MESSAGECHAT, message, true);
+        speaker.map.sendToWatchers(speaker, chatPacket(yell ? ChatType.CHAT_MSG_YELL : ChatType.CHAT_MSG_SAY,
+            Language.LANG_UNIVERSAL, speaker.player.guid, text), true);
         return true;
     }
     gm.redSystemMessage("Please select a creature or player before using this command.");

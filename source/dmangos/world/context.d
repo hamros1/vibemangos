@@ -2462,6 +2462,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
      * A packet for every player in the world, on every node; with
      * `staffOnly`, only for staff announcement recipients.
      */
+    void toEveryone(const imported!"dmangos.protocol.packet".Packet packet, bool staffOnly = 0)
+    {
+        toEveryone(packet.opcode, packet.body_, staffOnly);
+    }
+
+    /// ditto
     void toEveryone(Opcode opcode, const(ubyte)[] body_, bool staffOnly = 0)
     {
         deliverToOwn(opcode, body_, staffOnly);

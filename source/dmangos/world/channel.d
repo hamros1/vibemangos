@@ -27,7 +27,7 @@ import std.uni : toLower;
 import dmangos.bytes : ByteWriter;
 import dmangos.world.clientdata : ChatChannelsEntry, ClientData, Team;
 import dmangos.world.opcodes : ChatType, Language, Opcode;
-import dmangos.world.queries : chatMessage;
+import dmangos.protocol.chat : chatPacket;
 
 /// The code of an `SMSG_CHANNEL_NOTIFY`: what happened, or why a request failed.
 enum ChatNotify : ubyte
@@ -117,6 +117,9 @@ interface ChannelMember
     @property byte pvpRank() const;
 
     void deliver(Opcode opcode, const(ubyte)[] body_);
+
+    /// ditto, a packet of `dmangos.protocol`
+    void deliver(const imported!"dmangos.protocol.packet".Packet packet);
 }
 
 /// Finds the players online, as members: by guid, or by name in any case; null if none.
@@ -427,14 +430,13 @@ final class Channel
             return notify(player, ChatNotify.notModerator);
         if (owner_.settings.crossFaction)
             language = Language.LANG_UNIVERSAL;
-        sendToAll(chatMessage(ChatType.CHAT_MSG_CHANNEL, language, guid, text, chatTag, name), Opcode.SMSG_MESSAGECHAT);
+        sendToAll(chatPacket(ChatType.CHAT_MSG_CHANNEL, language, guid, text, chatTag, name));
     }
 
     /// `guid` says `text` to everyone in the channel, a member or not, muted or not (the GM ticket notices).
     void forcedSay(ulong guid, string text, ubyte chatTag)
     {
-        sendToAll(chatMessage(ChatType.CHAT_MSG_CHANNEL, Language.LANG_UNIVERSAL, guid, text, chatTag, name),
-            Opcode.SMSG_MESSAGECHAT);
+        sendToAll(chatPacket(ChatType.CHAT_MSG_CHANNEL, Language.LANG_UNIVERSAL, guid, text, chatTag, name));
     }
 
     /// `player` invites the player named to the channel.
@@ -547,6 +549,12 @@ private:
         foreach (guid; memberGuids)
             if (auto member = owner_.directory.member(guid))
                 member.deliver(opcode, body_);
+    }
+
+    /// ditto, a packet of `dmangos.protocol`
+    void sendToAll(const imported!"dmangos.protocol.packet".Packet packet)
+    {
+        sendToAll(packet.body_, packet.opcode);
     }
 }
 
@@ -779,6 +787,7 @@ version (unittest)
         byte rank;
         @property byte pvpRank() const { return rank; }
         void deliver(Opcode opcode, const(ubyte)[] body_) { received ~= opcode; bodies ~= body_.dup; }
+        void deliver(const imported!"dmangos.protocol.packet".Packet packet) { deliver(packet.opcode, packet.body_); }
 
         Opcode[] take()
         {

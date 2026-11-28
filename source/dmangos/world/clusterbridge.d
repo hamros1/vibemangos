@@ -844,11 +844,11 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
     {
         import dmangos.world.gmtargets : GmSink;
         import dmangos.world.opcodes : ChatType, Language;
-        import dmangos.world.queries : chatMessage;
+        import dmangos.protocol.chat : chatPacket;
 
         auto sink = GmSink((string text) {
-            node.sendTo(peer, DeliverTo(m.gm, cast(ushort) Opcode.SMSG_MESSAGECHAT,
-                chatMessage(ChatType.CHAT_MSG_SYSTEM, Language.LANG_UNIVERSAL, 0, text)));
+            const reply = chatPacket(ChatType.CHAT_MSG_SYSTEM, Language.LANG_UNIVERSAL, 0, text);
+            node.sendTo(peer, DeliverTo(m.gm, cast(ushort) reply.opcode, reply.body_.dup));
         });
         import dmangos.world.gmtargets : aboutInstances, everywhere, GmRemoteOp;
 

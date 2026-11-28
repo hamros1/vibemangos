@@ -81,6 +81,12 @@ mixin template GuildHandlers()
      * A packet to the guild: to the members online here
      * whose rank has `right` (0: everyone), and in a cluster to those on the other nodes.
      */
+    package void guildBroadcast(Guild g, const imported!"dmangos.protocol.packet".Packet packet, uint right = 0)
+    {
+        guildBroadcast(g, packet.opcode, packet.body_, right);
+    }
+
+    /// ditto
     package void guildBroadcast(Guild g, Opcode opcode, const(ubyte)[] body_, uint right = 0)
     {
         context.guildToMembersHere(g.id, opcode, body_, right);
@@ -938,16 +944,15 @@ mixin template GuildHandlers()
     /// `CHAT_MSG_GUILD` and `CHAT_MSG_OFFICER`: from a rank that may speak, to those that may listen.
     package void guildChat(bool officer, uint language, string text)
     {
-        import dmangos.world.queries : chatMessage;
+        import dmangos.protocol.chat : chatPacket;
 
         auto g = ownGuild();
         if (g is null)
             return;
         if (!g.hasRight(ownRank(), officer ? GuildRight.officerChatSpeak : GuildRight.chatSpeak))
             return;
-        const body_ = chatMessage(officer ? ChatType.CHAT_MSG_OFFICER : ChatType.CHAT_MSG_GUILD, cast(Language) language,
-            player.guid, text, player.chatTag);
-        guildBroadcast(g, Opcode.SMSG_MESSAGECHAT, body_, officer ? GuildRight.officerChatListen : GuildRight.chatListen);
+        guildBroadcast(g, chatPacket(officer ? ChatType.CHAT_MSG_OFFICER : ChatType.CHAT_MSG_GUILD, cast(Language) language,
+            player.guid, text, player.chatTag), officer ? GuildRight.officerChatListen : GuildRight.chatListen);
     }
 
     /// At login: the guild's message of the day, and its members hear the player signed on.

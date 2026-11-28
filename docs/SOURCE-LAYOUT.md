@@ -21,6 +21,8 @@ source/dmangos/             code shared by every server
   crypto/                     SRP6, SHA-1 helpers, BigInt <-> little-endian, OS randomness
   mysql/                      run-time loaded MySQL C API binding; connection with compile-time checked queries
   net/                        epoll event loop, select elsewhere (server.d); compile-time packet dispatch (dispatch.d)
+source/dmangos/protocol/    the client protocol (docs/PROTOCOL.md): packet.d (`Packet`: an opcode and its body), chat.d
+                              (`SMSG_MESSAGECHAT`); the packets move here from game code group by group
 source/dmangos/script/      the scripting framework (docs/SCRIPTING.md): api.d (handles, events, contexts,
                               host interfaces), registry.d (UDAs, compile-time discovery, generated dispatch,
                               pools), schedule.d (timers as data), state.d (state saved by reflection),

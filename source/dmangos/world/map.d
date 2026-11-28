@@ -80,6 +80,9 @@ interface Inhabitant
     /// Frames and queues a packet for this player's client.
     void deliver(Opcode opcode, const(ubyte)[] body_);
 
+    /// ditto, a packet of `dmangos.protocol`
+    void deliver(const imported!"dmangos.protocol.packet".Packet packet);
+
     /// The create block `viewer` gets when this player comes into its sight.
     UpdateData appearanceFor(const Inhabitant viewer, uint serverTime) const;
 
@@ -2891,6 +2894,12 @@ final class Map : MotionWorld
     }
 
     /// Delivers a packet to every player that sees `from`, and to `from` itself if `includeSelf`.
+    void sendToWatchers(Inhabitant from, const imported!"dmangos.protocol.packet".Packet packet, bool includeSelf = false)
+    {
+        sendToWatchers(from, packet.opcode, packet.body_, includeSelf);
+    }
+
+    /// ditto
     void sendToWatchers(Inhabitant from, Opcode opcode, const(ubyte)[] body_, bool includeSelf = false)
     {
         const slot = slotFor(from.character.guid);
@@ -2944,6 +2953,12 @@ final class Map : MotionWorld
      * Delivers a packet to every player within `range` yards of `center`, whether they see each other or
      * not, on this node and on every other with players near.
      */
+    void sendInRange(Position center, float range, const imported!"dmangos.protocol.packet".Packet packet)
+    {
+        sendInRange(center, range, packet.opcode, packet.body_);
+    }
+
+    /// ditto
     void sendInRange(Position center, float range, Opcode opcode, const(ubyte)[] body_)
     {
         deliverInRange(center, range, opcode, body_);
@@ -3675,6 +3690,8 @@ version (unittest)
         {
             received ~= opcode;
         }
+
+        void deliver(const imported!"dmangos.protocol.packet".Packet packet) { deliver(packet.opcode, packet.body_); }
 
         void moveTo(float x, float y)
         {

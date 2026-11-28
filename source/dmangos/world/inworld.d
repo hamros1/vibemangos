@@ -60,7 +60,8 @@ mixin template InWorldHandlers()
     import dmangos.world.duelhandlers : DuelEnd;
     import dmangos.world.player : DeathState, PlayerFlags, RestType;
     import dmangos.world.channelservice : ChannelOp;
-    import dmangos.world.queries : chatMessage, ClientChat, ClientWho, whoList, WhoEntry, creatureQueryResponse, gameObjectQueryResponse,
+    import dmangos.protocol.chat : chatPacket;
+    import dmangos.world.queries : ClientChat, ClientWho, whoList, WhoEntry, creatureQueryResponse, gameObjectQueryResponse,
         itemQueryResponse;
     import dmangos.world.clientdata : EmotesTextEntry;
     import dmangos.world.teleport : Teleport;
@@ -1361,7 +1362,6 @@ private:
     package void ticketChannelSay(string text, bool toAll)
     {
         import dmangos.world.channelservice : ChannelOp;
-        import dmangos.world.queries : chatMessage;
 
         const channel = context.config.gmClientChannel;
         if (channel.length == 0)
@@ -1369,7 +1369,7 @@ private:
         if (toAll)
             context.channelCommand(this, ChannelOp.forcedSay, channel, text);
         else
-            deliver(Opcode.SMSG_MESSAGECHAT, chatMessage(ChatType.CHAT_MSG_CHANNEL, Language.LANG_UNIVERSAL, player.guid,
+            deliver(chatPacket(ChatType.CHAT_MSG_CHANNEL, Language.LANG_UNIVERSAL, player.guid,
                 text, 0, channel));
     }
 
@@ -1562,12 +1562,11 @@ private:
     @Handles(Opcode.CMSG_CHAT_IGNORED, WorldState.inWorld)
     void handleChatIgnored(ref ByteReader reader)
     {
-        import dmangos.world.queries : chatMessage;
 
         const guid = reader.read!ulong;
         if (auto other = context.onlinePlayer(guid))
             if (other.player !is null)
-                other.deliver(Opcode.SMSG_MESSAGECHAT, chatMessage(ChatType.CHAT_MSG_IGNORED, Language.LANG_UNIVERSAL,
+                other.deliver(chatPacket(ChatType.CHAT_MSG_IGNORED, Language.LANG_UNIVERSAL,
                     player.guid, player.data.name));
     }
 
@@ -1838,7 +1837,7 @@ private:
             break;
         case ChatType.CHAT_MSG_PARTY:
             if (auto group = context.groups.of(player.guid))
-                group.broadcast(Opcode.SMSG_MESSAGECHAT, chatMessage(chat.type, language, player.guid, chat.text,
+                group.broadcast(chatPacket(chat.type, language, player.guid, chat.text,
                     player.chatTag), group.subGroupOf(player.guid));
             break;
         case ChatType.CHAT_MSG_RAID:
@@ -1847,7 +1846,7 @@ private:
             if (raid is null || !raid.isRaid
                 || chat.type == ChatType.CHAT_MSG_RAID_LEADER && !raid.isLeader(player.guid))
                 break;
-            raid.broadcast(Opcode.SMSG_MESSAGECHAT, chatMessage(chat.type, language, player.guid, chat.text,
+            raid.broadcast(chatPacket(chat.type, language, player.guid, chat.text,
                 player.chatTag));
             break;
         case ChatType.CHAT_MSG_RAID_WARNING:
@@ -1857,7 +1856,7 @@ private:
             if (group.isRaid ? !group.isLeader(player.guid) && !group.isAssistant(player.guid)
                 : config.chatRestrictedRaidWarnings)
                 break;
-            group.broadcast(Opcode.SMSG_MESSAGECHAT, chatMessage(chat.type, language, player.guid, chat.text,
+            group.broadcast(chatPacket(chat.type, language, player.guid, chat.text,
                 player.chatTag));
             break;
         case ChatType.CHAT_MSG_CHANNEL:
@@ -1927,23 +1926,18 @@ private:
     {
         if (teleporting == Teleport.far)
             return;
-        const body_ = chatMessage(type, language, player.guid, text, player.chatTag);
+        const said = chatPacket(type, language, player.guid, text, player.chatTag);
         auto copy = type == ChatType.CHAT_MSG_EMOTE ? currentBattleground() : null;
         if (copy is null || !copy.crossRealm)
-            return map.sendInRange(player.position, range, Opcode.SMSG_MESSAGECHAT, body_);
+            return map.sendInRange(player.position, range, said);
 
         // A player emote normally gets its speaker from the name cache. Its emote formatter uses the bare name.
-        const(ubyte)[] foreign;
         foreach (who; map.near(player.position, range))
             if (const speaker = copy.foreignChatName(who.character.guid, player.guid))
-            {
-                if (foreign is null)
-                    foreign = chatMessage(ChatType.CHAT_MSG_TEXT_EMOTE, language, player.guid,
-                        speaker ~ " " ~ text, player.chatTag);
-                who.deliver(Opcode.SMSG_MESSAGECHAT, foreign);
-            }
+                who.deliver(chatPacket(ChatType.CHAT_MSG_TEXT_EMOTE, language, player.guid, speaker ~ " " ~ text,
+                    player.chatTag));
             else
-                who.deliver(Opcode.SMSG_MESSAGECHAT, body_);
+                who.deliver(said);
     }
 
     /**
@@ -2062,7 +2056,7 @@ private:
             if (const speaker = copy.foreignChatName(viewer, player.guid))
                 if (const line = observerEmote(*textEntry, speaker, name, viewer == request.target))
                 {
-                    who.deliver(Opcode.SMSG_MESSAGECHAT, chatMessage(ChatType.CHAT_MSG_TEXT_EMOTE,
+                    who.deliver(chatPacket(ChatType.CHAT_MSG_TEXT_EMOTE,
                         Language.LANG_UNIVERSAL, player.guid, line, player.chatTag));
                     continue;
                 }

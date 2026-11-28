@@ -317,7 +317,7 @@ final class ObjectScripts
 
         ActionResult hostZoneNotice(uint text)
         {
-            import dmangos.world.battleground : battlegroundMessage;
+            import dmangos.protocol.chat : chatPacket;
 
             const said = world.data.npcs.broadcastTexts.get(text, BroadcastText.init);
             auto t = world.terrain(map.id);
@@ -327,11 +327,11 @@ final class ObjectScripts
             if (t is null || !t.knows(p.x, p.y))
                 return ActionResult.notHere;
             const zone = t.zoneAndArea(p.x, p.y, p.z)[0];
-            const body_ = battlegroundMessage(ChatType.CHAT_MSG_BG_SYSTEM_NEUTRAL, said.text(false));
+            const message = chatPacket(ChatType.CHAT_MSG_BG_SYSTEM_NEUTRAL, Language.LANG_UNIVERSAL, 0, said.text(false));
             foreach (player; world.online.values) // those this node simulates (a zone across nodes: each node's own)
                 if (player.character !is null && player.character.data.map == map.id
                         && player.character.data.zone == zone)
-                    player.deliver(Opcode.SMSG_MESSAGECHAT, body_);
+                    player.deliver(message);
             return ActionResult.ok;
         }
 

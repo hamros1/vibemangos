@@ -426,13 +426,6 @@ struct ServerGameObjectQueryResponse
     @Remainder ubyte[] body_;
 }
 
-/// `SMSG_MESSAGECHAT`; the body is built by `dmangos.world.chat`.
-struct ServerMessageChat
-{
-    mixin ServerPacket!(Opcode.SMSG_MESSAGECHAT);
-    @Remainder ubyte[] body_;
-}
-
 /// `SMSG_NOTIFICATION`: a message in the middle of the screen.
 struct ServerNotification
 {

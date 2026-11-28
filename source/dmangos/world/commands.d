@@ -333,8 +333,7 @@ mixin template ChatCommands()
     import dmangos.world.creature : Creature;
     import dmangos.world.objects : HighGuid, highGuidOf;
     import dmangos.world.opcodes : ChatType, Language;
-    import dmangos.world.packets : ServerMessageChat;
-    import dmangos.world.queries : chatMessage;
+    import dmangos.protocol.chat : chatPacket;
     import dmangos.world.updatefields : UNIT_END, UNIT_FIELD_MINDAMAGE, UNIT_FIELD_STAT1, UNIT_FIELD_TARGET;
 
 private:
@@ -599,8 +598,7 @@ private:
     /// A system message to this player, cut at 1023 bytes.
     package void systemMessage(string text)
     {
-        send(ServerMessageChat(chatMessage(ChatType.CHAT_MSG_SYSTEM, Language.LANG_UNIVERSAL, 0,
-            systemChatText(text))));
+        deliver(chatPacket(ChatType.CHAT_MSG_SYSTEM, Language.LANG_UNIVERSAL, 0, systemChatText(text)));
     }
 
     /// A system message in the colour `color`.

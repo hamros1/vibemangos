@@ -17,7 +17,7 @@ mixin template GmActions()
     import dmangos.world.opcodes;
     import dmangos.world.packets;
     import dmangos.world.playercreate : NewSkill, NewSpell;
-    import dmangos.world.queries : chatMessage;
+    import dmangos.protocol.chat : chatPacket;
     import dmangos.world.updatefields;
 
 private:
@@ -199,13 +199,13 @@ private:
     /// A system message to everyone in the world.
     package void sendWorldText(string text)
     {
-        toEveryone(Opcode.SMSG_MESSAGECHAT, chatMessage(ChatType.CHAT_MSG_SYSTEM, Language.LANG_UNIVERSAL, 0, text));
+        toEveryone(chatPacket(ChatType.CHAT_MSG_SYSTEM, Language.LANG_UNIVERSAL, 0, text));
     }
 
     /// A system message to staff announcement recipients.
     package void sendGmWorldText(string text)
     {
-        context.toEveryone(Opcode.SMSG_MESSAGECHAT, chatMessage(ChatType.CHAT_MSG_SYSTEM, Language.LANG_UNIVERSAL, 0,
+        context.toEveryone(chatPacket(ChatType.CHAT_MSG_SYSTEM, Language.LANG_UNIVERSAL, 0,
             text), true);
     }
 
@@ -219,5 +219,11 @@ private:
     package void toEveryone(Opcode opcode, const(ubyte)[] body_)
     {
         context.toEveryone(opcode, body_);
+    }
+
+    /// ditto, a packet of `dmangos.protocol`
+    package void toEveryone(const imported!"dmangos.protocol.packet".Packet packet)
+    {
+        context.toEveryone(packet);
     }
 }

@@ -89,7 +89,7 @@ import dmangos.world.map : deliverUpdate, Inhabitant, Map;
 import dmangos.world.movement : Position;
 import dmangos.world.online : OnlinePlayer;
 import dmangos.world.player : DeathState, Player, PlayerFlags, Viewer;
-import dmangos.world.queries : chatMessage;
+import dmangos.protocol.chat : chatPacket;
 import dmangos.world.opcodes;
 import dmangos.world.packets;
 
@@ -271,6 +271,12 @@ final class Character : OnlinePlayer, Looter
     void deliver(Opcode opcode, const(ubyte)[] body_)
     {
         connection.deliver(opcode, body_);
+    }
+
+    /// ditto, a packet of `dmangos.protocol`
+    void deliver(const imported!"dmangos.protocol.packet".Packet packet)
+    {
+        deliver(packet.opcode, packet.body_);
     }
 
     /// Closes its connection (`Kickable.kick`): the player leaves the world.
@@ -470,6 +476,12 @@ final class Character : OnlinePlayer, Looter
     void tell(Opcode opcode, const(ubyte)[] body_)
     {
         deliver(opcode, body_);
+    }
+
+    /// ditto
+    void tell(const imported!"dmangos.protocol.packet".Packet packet)
+    {
+        deliver(packet.opcode, packet.body_);
     }
 
     /// See `UnitRef`.
@@ -910,7 +922,7 @@ private:
 
     void sendSystemMessage(string text)
     {
-        send(ServerMessageChat(chatMessage(ChatType.CHAT_MSG_SYSTEM, Language.LANG_UNIVERSAL, 0, text)));
+        deliver(chatPacket(ChatType.CHAT_MSG_SYSTEM, Language.LANG_UNIVERSAL, 0, text));
     }
 
     /// A message in the middle of the screen.

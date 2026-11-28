@@ -384,6 +384,8 @@ private final class Member : ChannelMember
         if (node != context.nodeId)
             context.deliverRemote(node, guid_, cast(ushort) opcode, body_);
     }
+
+    void deliver(const imported!"dmangos.protocol.packet".Packet packet) { deliver(packet.opcode, packet.body_); }
 }
 
 // ---------------------------------------------------------------------------

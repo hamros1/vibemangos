@@ -457,6 +457,12 @@ struct UnitRef
             session.tell(opcode, body_);
     }
 
+    /// ditto, a packet of `dmangos.protocol`
+    void tell(const imported!"dmangos.protocol.packet".Packet packet)
+    {
+        tell(packet.opcode, packet.body_);
+    }
+
     /// A quest's event happened for it (or its place was explored).
     void questEventHappened(uint quest)
     {

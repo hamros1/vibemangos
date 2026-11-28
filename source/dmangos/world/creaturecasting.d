@@ -91,7 +91,7 @@ mixin template CreatureCasting()
     import dmangos.world.eventai;
     import dmangos.world.motion : launch, stopMoving;
     import dmangos.world.opcodes : ChatType, Language, Opcode;
-    import dmangos.world.queries : monsterChatMessage;
+    import dmangos.protocol.chat : monsterChatPacket;
     import dmangos.world.relations : canAttack;
     import dmangos.world.spellcast : castTime, duration, effectValue, healLog, spellMissLog, isNextMeleeSwingSpell, nonMeleeDamageLog,
         powerCost, radius, range, spellGoPacket, spellStartPacket, SpellMissInfo, SpellTargets,
@@ -2551,11 +2551,11 @@ mixin template CreatureCasting()
         default:
             return;
         }
-        const body_ = monsterChatMessage(type, me.guid, me.template_.name, text.text(false), language, target);
+        const said = monsterChatPacket(type, me.guid, me.template_.name, text.text(false), language, target);
         if (type == ChatType.CHAT_MSG_MONSTER_WHISPER || type == ChatType.CHAT_MSG_RAID_BOSS_WHISPER)
         {
             if (auto other = world_.unit(target))
-                other.tell(Opcode.SMSG_MESSAGECHAT, body_);
+                other.tell(said);
         }
         else
         {
@@ -2563,7 +2563,7 @@ mixin template CreatureCasting()
             // dungeon, its whole copy (Baron Rivendare's warnings across Stratholme). The open world's still by range.
             const zoneWide = text.chatType == 6 && me.instanceId;
             world_.sendInRange(me.position, zoneWide ? 2000 : lore.listenRange(type == ChatType.CHAT_MSG_RAID_BOSS_EMOTE
-                ? ChatType.CHAT_MSG_MONSTER_YELL : type), Opcode.SMSG_MESSAGECHAT, body_);
+                ? ChatType.CHAT_MSG_MONSTER_YELL : type), said);
         }
         if (text.emotes[0].emote)
             scriptEmote(text.emotes[0].emote);
