@@ -1496,6 +1496,14 @@ float auraMeasure(Character who, AuraType type, int misc)
 
         return p.speeds[MoveType.run];
     }
+    case modSkill, modSkillTalent: // a skill it has (a weapon's, a profession's): its value with bonuses
+        return misc > 0 && p.skillSlot(misc) >= 0 ? p.skillWithBonus(misc) : float.nan;
+    case modScale: // its size (Enlarge, a giant's growth)
+    {
+        import dmangos.world.updatefields : OBJECT_FIELD_SCALE_X;
+
+        return p.values.get!OBJECT_FIELD_SCALE_X;
+    }
     case modRangedHaste: // a ranged weapon's speed: none worn (Rapid Fire asks for none), nothing to see
     {
         import dmangos.world.defines : equipmentSlotRanged;
@@ -1527,6 +1535,12 @@ float auraMeasureOn(UnitRef unit, AuraType type, int misc)
         return misc > 0 ? f.damageTaken[bsf(misc)] : float.nan;
     case modDamageTaken:
         return misc > 0 ? f.damageTakenFlat[bsf(misc)] : float.nan;
+    case modScale:
+    {
+        import dmangos.world.updatefields : OBJECT_FIELD_SCALE_X;
+
+        return c.values.get!OBJECT_FIELD_SCALE_X;
+    }
     case modHitChance:
         return f.hitBonus;
     case modCritPercent:
@@ -1577,6 +1591,8 @@ string auraMeasureName(AuraType type)
     case modMeleeHaste, modAttackSpeed: return "its swing speed";
     case modRangedHaste: return "its ranged speed";
     case modIncreaseSpeed, modSpeedAlways, modSpeedNotStack, modDecreaseSpeed: return "its run speed";
+    case modSkill, modSkillTalent: return "its skill";
+    case modScale: return "its size";
     default: return "nothing";
     }
 }
