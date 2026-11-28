@@ -17,6 +17,7 @@ class ClusterProxy:
         self.dropping = {}
         self.dropped = {}
         self.delays = {}
+        self.kind_delays = {}
         self.links = {}
         self.tasks = set()
         self.listeners = []
@@ -63,9 +64,11 @@ class ClusterProxy:
         """Discard frames of the given message kinds, by (source, target) direction, until called again."""
         self.dropping = {direction: frozenset(types) for direction, types in kinds.items()}
 
-    async def delay(self, delays):
-        """Hold every frame of the given (source, target) directions for so many seconds, in order, until called again."""
+    async def delay(self, delays, kinds=None):
+        """Hold every frame of the given (source, target) directions for so many seconds, in order, until called again;
+        `kinds` holds the frames of some message kinds longer: {direction: (kinds, seconds)}."""
         self.delays = dict(delays)
+        self.kind_delays = {direction: (frozenset(types), seconds) for direction, (types, seconds) in (kinds or {}).items()}
 
     async def dropped_frames(self, direction):
         return self.dropped.get(direction, 0)
@@ -143,7 +146,11 @@ class ClusterProxy:
                     continue
                 if delivery.done():
                     delivery.result()  # the peer's side failed: raises why
-                waiting.put_nowait((loop.time() + self.delays.get(direction, 0), header + payload))
+                held = self.delays.get(direction, 0)
+                types, longer = self.kind_delays.get(direction, ((), 0))
+                if kind in types:
+                    held = max(held, longer)
+                waiting.put_nowait((loop.time() + held, header + payload))
         finally:
             delivery.cancel()
             await asyncio.gather(delivery, return_exceptions=True)

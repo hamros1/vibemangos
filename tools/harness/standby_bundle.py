@@ -2,7 +2,7 @@
 """Kill the coordinator while a worker's region releases, and their objects, are on their way to it.
 
 Single-standby mode. A gateway player plays at a place worker node 3 simulates, so its regions hold live
-objects. The proxy holds node 3's frames to the coordinator (past the coordinator's death); node 3 is stopped cleanly
+objects. The proxy holds node 3's frames to the coordinator for two seconds, its releases past the coordinator's death; node 3 is stopped cleanly
 (SIGTERM: it drains, releasing every region with its objects), and the coordinator is killed as soon as
 node 3 has sent its releases, which die with it in the proxy. The standby takes over and asks for the releases
 again: each must come with its objects, and reach the region's next owner as a handover ("arrived with N
@@ -78,10 +78,11 @@ def exercise(fixture, proxy, loop, world_ports, auth_port, releases):
     async def hold_releases():
         for parts in releases.values():
             parts.clear()
-        # Long enough that they are still held when the coordinator dies, however slow the machine: held only two
-        # seconds, under the load of the other chaos cases they reached it first and it granted the regions on,
+        # Its frames two seconds (its drain must still reach the coordinator, which then revokes its regions), its
+        # releases long enough to be held still when the coordinator dies, however slow the machine: held two
+        # seconds too, under the load of the other chaos cases they reached it first and it granted the regions on,
         # in a table the standby never saw; the standby then rightly waits a lease before granting them (`grantAfterWait`).
-        await proxy.delay({(WORKER, COORDINATOR): 30.0})
+        await proxy.delay({(WORKER, COORDINATOR): 2.0}, {(WORKER, COORDINATOR): ({REGION_RELEASED}, 30.0)})
 
     network(hold_releases())
     os.kill(cluster.processes[WORKER].pid, signal.SIGTERM)
