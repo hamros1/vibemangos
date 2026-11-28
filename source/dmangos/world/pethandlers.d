@@ -143,6 +143,7 @@ mixin template PetHandlers()
     import dmangos.world.creature : classStatsKey, Creature;
     import dmangos.world.creatureai : ReactState;
     import dmangos.world.unit : UnitRef;
+    import dmangos.world.experience : KillValue;
     import dmangos.world.database : AuraRecord, PetRecord, PetSpellRecord;
     import dmangos.world.defines : UnitFlags;
     import dmangos.world.movement : baseMoveSpeed, MovementInfo, MoveType, Position;
@@ -1270,8 +1271,35 @@ mixin template PetHandlers()
         ref v = pet_.values;
         uint level = v.get!UNIT_FIELD_LEVEL;
         const most = player.data.level < context.config.maxPlayerLevel ? player.data.level : context.config.maxPlayerLevel;
-        if (level >= most)
+        if (level < most)
+            petLevelsUp(xp, level, most);
+        // Its loyalty, at its owner's level too: experience counts towards the next level; a kill earns a little
+        // (more at low levels).
+        auto state = petState();
+        state.xpForNextLoyalty = xp >= state.xpForNextLoyalty ? 0 : state.xpForNextLoyalty - xp;
+        if (level <= 100)
+            modifyLoyalty(cast(int)((100 - level) / 10 + (6 - state.loyalty)));
+    }
+
+    /**
+     * A kill's experience for the hunter pet, of its own level (CMaNGOS's `XP::Gain(pet, victim)`) on a kill of
+     * `value`: all of it alone (`share` 1), or in a group the share its owner had of the kill (`halved`: the half
+     * and one of a group whose highest member is grey to the kill).
+     */
+    package void petGainsKillXp(const KillValue value, float share = 1, bool halved = false)
+    {
+        import dmangos.world.experience : killGain;
+        import std.math : round;
+
+        if (pet_ is null)
             return;
+        const xp = killGain(pet_.values.get!UNIT_FIELD_LEVEL, value) * share;
+        petGainsXp(cast(uint) round(halved ? xp * 0.5f + 1.0f : xp));
+    }
+
+    private void petLevelsUp(uint xp, ref uint level, uint most)
+    {
+        ref v = pet_.values;
         uint next = v.get!UNIT_FIELD_PETNEXTLEVELEXP, current = v.get!UNIT_FIELD_PETEXPERIENCE + xp;
         while (current >= next && level < most)
         {
@@ -1287,11 +1315,6 @@ mixin template PetHandlers()
         }
         v.set!UNIT_FIELD_PETEXPERIENCE(level < most ? current : 0);
         map.flushObjectChanges(pet_);
-        // Its loyalty: experience counts towards the next level; a kill earns a little (more at low levels).
-        auto state = petState();
-        state.xpForNextLoyalty = xp >= state.xpForNextLoyalty ? 0 : state.xpForNextLoyalty - xp;
-        if (level <= 100)
-            modifyLoyalty(cast(int)((100 - level) / 10 + (6 - state.loyalty)));
     }
 
     // -----------------------------------------------------------------------

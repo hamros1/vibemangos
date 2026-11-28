@@ -781,7 +781,7 @@ private:
                 local.rewardHonorForCreature(victim);
                 local.killedMonster(victim.template_.entry, victim.guid);
                 const xp = killGain(local.player.data.level, value);
-                local.petGainsXp(xp); // the pet's share, before its owner perhaps passes its level
+                local.petGainsKillXp(value); // the pet's, of its level, before its owner perhaps passes its level
                 return local.giveXP(xp, victim.guid, 1.0f);
             }
             if (context.killShareElsewhere !is null)
@@ -807,6 +807,7 @@ private:
             float reputationRate = 0;
             uint xp;
             float rate = 1;
+            float share = 0; // of the kill's experience: its pet's share too
         }
         Near[] members;
         foreach (ref slot; group.members)
@@ -861,6 +862,7 @@ private:
                 const memberXp = highest is highestNotGray ? xp * share : xp * share * 0.5f + 1.0f;
                 m.xp = cast(uint) round(memberXp);
                 m.rate = rate;
+                m.share = share;
             }
         }
         const entry = victim.template_.entry, level = victim.values.get!UNIT_FIELD_LEVEL;
@@ -876,7 +878,9 @@ private:
                     m.here.reputations.rewardKillReputation(victim, m.reputationRate);
                 if (m.xp)
                 {
-                    m.here.petGainsXp(m.xp / 2); // half for its pet
+                    // Its pet: the experience of the pet's level, by the member's share (CMaNGOS's
+                    // `RewardGroupAtKill_helper`, which applies the share twice: once here).
+                    m.here.petGainsKillXp(value, m.share, highest !is highestNotGray);
                     m.here.giveXP(m.xp, victim.guid, m.rate);
                 }
             }

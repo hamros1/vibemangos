@@ -595,6 +595,26 @@ void dealDamage(UnitRef attacker, UnitRef victim, uint damage, const Blow blow)
     }
 }
 
+/**
+ * A flagged player's pet attacked (its PvP unit flag, its owner's): the player behind `attacker` (itself, or a pet's
+ * owner), unless the pet's own or its owner's duellist, is flagged for fighting it, as for fighting its owner
+ * (CMaNGOS's `SetInCombatWithVictim`: a victim `IsPvP` and player-controlled).
+ */
+private void flaggedPetAttacked(UnitRef attacker, Creature pet, Map map)
+{
+    import dmangos.world.defines : UnitFlags;
+    import dmangos.world.updatefields : UNIT_FIELD_FLAGS;
+
+    const owner = pet.petOwner;
+    if (!owner || !(pet.values.get!UNIT_FIELD_FLAGS & UnitFlags.pvp))
+        return;
+    auto by = attacker.kind == UnitKind.player ? attacker.session
+        : attacker.kind == UnitKind.creature && attacker.creature.petOwner
+            ? map.unit(attacker.creature.petOwner).session : null;
+    if (by !is null && by.player !is null && by.player.guid != owner && !by.dueling.duelingWith(owner))
+        by.pvp.attackedFlaggedPlayer();
+}
+
 private void creatureDamaged(UnitRef attacker, UnitRef victim, uint damage, const Blow blow)
 {
     auto creature = victim.creature;
@@ -604,6 +624,7 @@ private void creatureDamaged(UnitRef attacker, UnitRef victim, uint damage, cons
     if (attacker)
     {
         creature.ai.attackedBy(attacker, map);
+        flaggedPetAttacked(attacker, creature, map);
         // A player's threat by its auras for the school (`MOD_THREAT`: Defiance, Subtlety).
         float threat = 1;
         if (!blow.threatIncludesCaster && attacker.kind == UnitKind.player && blow.school < 7)

@@ -120,6 +120,33 @@ unittest
     assert(restored.ai.petCooldowns.get(spellSummonImp, 0) > 110_000);
 }
 
+/// A flagged player's pet attacked: its attacker is flagged, as for attacking its owner (CMaNGOS's
+/// `SetInCombatWithVictim`); an unflagged one's pet flags no one.
+unittest
+{
+    import dmangos.world.unit : Blow, dealDamage;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    const at = Position(-8949.95f, -132.49f, 83.53f, 0);
+    auto client = loggedIn(context, db, 7, "Guldan", at, AccountLevel.player, raceHuman, 0, 1,
+        (ref c) { c.classId = classMage; });
+    auto thrall = loggedIn(context, db, 9, "Thrall", Position(at.x + 3, at.y, at.z), AccountLevel.player, raceOrc);
+    addPetData(&client, context);
+    auto summon = effectSpell(spellSummonImp, 56, imp);
+    auto session = client.session.inWorld;
+    session.summonPetEffect(&summon, 0);
+    auto pet = session.ownPet;
+    auto orc = thrall.session.inWorld;
+    auto map = context.map(0);
+    dealDamage(map.unit(orc.player.guid), map.unitOf(pet), 1, Blow.spell());
+    assert(!orc.pvp.isPvP, "an unflagged owner's pet: no flag");
+    client.write(Opcode.CMSG_TOGGLE_PVP, null);
+    assert(session.pvp.isPvP && (pet.values.get!UNIT_FIELD_FLAGS & imported!"dmangos.world.defines".UnitFlags.pvp));
+    dealDamage(map.unit(orc.player.guid), map.unitOf(pet), 1, Blow.spell());
+    assert(orc.pvp.isPvP && orc.pvp.isPvPContested, "a flagged owner's pet: its attacker flagged and contested");
+}
+
 /// A demon: summoned with its name and spells, following, named on query, sent back and summoned again.
 unittest
 {
@@ -310,6 +337,21 @@ unittest
     session.petGainsXp(1000);
     assert(pet.values.get!UNIT_FIELD_LEVEL == 3 && pet.values.get!UNIT_FIELD_PETEXPERIENCE == 0);
     assert(pet.values.get!UNIT_FIELD_MAXHEALTH == 100 && pet.values.get!UNIT_FIELD_HEALTH == 100);
+    {
+        // At its owner's level it learns no more, but its kills still earn it loyalty (CMaNGOS `GivePetXP`).
+        auto st = pet.petData;
+        const points = st.loyaltyPoints;
+        session.petGainsXp(10);
+        assert(pet.values.get!UNIT_FIELD_LEVEL == 3 && pet.values.get!UNIT_FIELD_PETEXPERIENCE == 0);
+        assert(st.loyaltyPoints == points + (100 - 3) / 10 + (6 - st.loyalty), "a kill's loyalty");
+        // A kill's experience is of the pet's level, not its owner's: a level 3 pet on a level 3 creature.
+        import dmangos.world.experience : killGain, KillValue;
+        (cast() session.character).data.level = 10;
+        const before = pet.values.get!UNIT_FIELD_PETEXPERIENCE;
+        session.petGainsKillXp(KillValue(3));
+        assert(pet.values.get!UNIT_FIELD_PETEXPERIENCE == before + killGain(3, KillValue(3)));
+        assert(killGain(3, KillValue(3)) != killGain(10, KillValue(3)));
+    }
     (cast() session.character).data.level = 1;
 
     // At a stable master: a slot bought, the pet stabled, then taken out again.
