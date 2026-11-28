@@ -247,7 +247,7 @@ risk.
 | combat.d:hasInArc (+ combathandlers swing check) | Swing needs target in 120° front arc; "front" for dodge/parry/block = 180° | WorldObject::HasInArc | none found | M |
 | combat.d:blockChance | Block + diff×0.04; NPC with diff>0: factor 0 | CalculateEffectiveBlockChance | Magey "Attack-table" (verify) | M. **Done:** a creature's at most 5%, 0.1%/pt less for skill above |
 | combat.d:canDodge / canParry / canBlock | Player dodges only from the front, creature from anywhere; parry front only; block physical + front + shield; auto-shot can be dodged (no attack-type check) | CanDodge, CanParry, CanBlock | none found (Wowpedia "Attack table" is retail) | M: decides behind-attacks. **Done:** no dodge or parry of ranged attacks (1.12 tooltips) |
-| combat.d:parryHasted | Parry haste: timer >60% → −40% of speed; 20–60% → set to 20% | DealMeleeDamage | Magey "Parry-haste" (measured Classic Era) | M |
+| combat.d:parryHasted | Parry haste: timer >60% → −40% of speed; 20–60% → set to 20% | DealMeleeDamage | Magey "Parry-haste" (measured Classic Era) | MM. **Checked 2026-11-28 against CMaNGOS** (`DealMeleeDamage`): the same (above 60% of the attack time 40% of it off, above 20% down to 20%; the nearer hand; none for `CREATURE_EXTRA_FLAG_NO_PARRY_HASTEN`) |
 | combat.d:damageFactor / DamageMods.of | Done%, versus-type% and taken% multiply | TOTAL_PCT mods | none found for stacking rule | M |
 | combathandlers.d:takeBlow | Non-periodic hit stands sitter up; warrior rage from damage taken | Unit::DealDamage | none found | M |
 | combathandlers.d:attack / attackPlayer | No melee mounted; off hand starts half a swing late; damage interrupts auras | Unit::Attack | none found | M |
@@ -269,7 +269,7 @@ risk.
 | effecthandlers.d:leechTick / manaLeechTick | Leech heal = min(dmg,HP)×mult, no SP; mana leech threat 0.5×gain | PeriodicTick LEECH | Spell.dbc EffectMultipleValue | M |
 | effecthandlers.d:addExtraAttacksEffect | At most 5 owed extra swings; extra swings grant none | EffectAddExtraAttacks | none found | MM. **Checked 2026-11-28 against CMaNGOS** (`EffectAddExtraAttacks`): the same (owed swings added, at most 5) |
 | effecthandlers.d:summonTrapEffect / updateTraps | One trap per slot; fires on first enemy; re-arm 4 s | GameObject::Update (traps) | none found | M |
-| spellhandlers.d:lockOutSchool | Interrupt locks school only for PreventionType=silence spells | IsSpellReady | SpellCategories.PreventionType | M |
+| spellhandlers.d:lockOutSchool | Interrupt locks school only for PreventionType=silence spells | IsSpellReady | SpellCategories.PreventionType | MM. **Checked 2026-11-28 against CMaNGOS** (`EffectInterruptCast`, `Spell::IsInterruptible`): the same (a cast or channel with the combat interrupt flag and silence prevention; its school locked for the interrupt's duration) |
 | spellhandlers.d:checkCast / crowdControlRefusal | Refusals when dead, stunned, silenced, fleeing, sitting, wrong equipment | CheckCast, CheckCasterAuras | SpellMisc Attributes, SpellCategories | M |
 | spellhandlers.d:checkCastAttributes | Stance masks, outdoors via vmaps, stealth-only, behind/front from attribute heuristics, spell_facing | CheckCast | SpellCastingRequirements.FacingCasterFlags (DB2), SpellShapeshift | M: heuristics replaceable by data |
 | spellhandlers.d:go (discountPowerOnMiss) | Miss/dodge/parry refunds 80% | Spell::finish | SpellMisc Attributes; Wowpedia (verify 1.12: 80% refund) | MM. **Checked 2026-11-28 against CMaNGOS** (`Spell::finish`, `SPELL_ATTR_EX_DISCOUNT_POWER_ON_MISS`): the same (80% back for each target missed, dodged, parried or deflected) |
@@ -284,7 +284,7 @@ risk.
 | creatureai.d:taunt | Taunt sets threat to top and forces target while aura lasts | EffectTaunt | Wowpedia "Taunt" (verify) | MM. **Checked 2026-11-28 against CMaNGOS** (`EffectTaunt`): the same (no effect on a creature already attacking the taunter; the taunter's threat raised to the highest, unmodified, and the victim forced to it; the `MOD_TAUNT` aura holds it) |
 | creatureai.d:forget | Feign Death/Vanish/Divine Intervention drop from threat list | Unit::CombatStop | none found | M |
 | creatureai.d:meleeAttackIfReady | Creature swings only in reach and 120° front arc; retry 100 ms | UpdateMeleeAttackingState | none found | M |
-| creatureai.d:parried | Parry haste unless NO_PARRY_HASTEN flag | CREATURE_EXTRA_FLAG_NO_PARRY_HASTEN | Magey "Parry-haste" | M |
+| creatureai.d:parried | Parry haste unless NO_PARRY_HASTEN flag | CREATURE_EXTRA_FLAG_NO_PARRY_HASTEN | Magey "Parry-haste" | MM. **Checked 2026-11-28 against CMaNGOS** (`DealMeleeDamage`): the same (above 60% of the attack time 40% of it off, above 20% down to 20%; the nearer hand; none for `CREATURE_EXTRA_FLAG_NO_PARRY_HASTEN`) |
 | creature.d:refreshAuraMovement | Speed × strongest increase × strongest decrease | speed mods | SpellEffect values | M |
 | creaturecasting.d:castSpell | No casting while evading/CC; school lockout; OOM in ranged mode → melee | Spell::prepare | SpellCategories.PreventionType | M |
 | creaturecasting.d:inRangeFor | Creature spell range = max + reach + 1.5 yd | Spell::CheckRange | SpellRange | M |
