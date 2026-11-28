@@ -68,15 +68,42 @@ uint spellDamageBonus(ref Caster caster, const(SpellInfo)* spell, uint school)
 {
     if (school == 0 || school >= 7)
         return 0;
-    const done = caster.spellPower(1 << school);
+    const done = caster.spellPower(1 << school) + relicBonus(caster, spell, false);
     return done <= 0 ? 0 : cast(uint)(done * directCoefficient(caster, spell, false));
 }
 
 /// The healing bonus: the caster's healing power times its heal's coefficient.
 uint healingBonus(ref Caster caster, const(SpellInfo)* spell)
 {
-    const done = caster.healingPower();
+    const done = caster.healingPower() + relicBonus(caster, spell, true);
     return done <= 0 ? 0 : cast(uint)(done * directCoefficient(caster, spell, true));
+}
+
+/// The relics' spells whose aura adds to the spell power of the spells it affects (`spell_affect`, else its
+/// `EffectItemType`), as healing (`spell_increased_healing_done_dummy`: Totem of Life, Libram of Divinity) or damage
+/// (`spell_increased_spell_damage_done_dummy`: Totem of Rage).
+private immutable uint[] relicHealing = [27855, 28851, 28853, 28856], relicDamage = [27859, 28857];
+
+/**
+ * What `caster`'s relics add to the power `spell` is cast with (CMaNGOS's `SCRIPT_LOCATION_SPELL_DAMAGE_DONE` and
+ * `_HEALING_DONE` auras: their amount to its "advertised benefit", before the coefficient), for a spell of the
+ * relic's class whose family flags its mask names. A mask of none (28857's) affects nothing, as there.
+ */
+int relicBonus(ref Caster caster, const(SpellInfo)* spell, bool heal)
+{
+    import std.algorithm.searching : canFind;
+    import dmangos.world.procs : affectMaskOf;
+
+    auto auras = caster.unit.auraSet;
+    if (auras is null || !spell.casting.spellFamilyFlags)
+        return 0;
+    const ids = heal ? relicHealing : relicDamage;
+    int bonus;
+    foreach (aura; auras.list)
+        if (ids.canFind(aura.spell.id) && aura.spell.casting.spellFamilyName == spell.casting.spellFamilyName
+                && (affectMaskOf(aura.spell, 0) & spell.casting.spellFamilyFlags))
+            bonus += aura.amount[0];
+    return bonus;
 }
 
 /// The crit chance more of a spell of `school` at the bearer of `auras` (`MOD_ATTACKER_SPELL_CRIT_CHANCE`, of the

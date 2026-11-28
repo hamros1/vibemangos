@@ -258,6 +258,37 @@ unittest
     assert(mana, "20268's mana, half the time");
 }
 
+/// A relic's spell power for the spells its aura affects: Totem of Life's (27855: 80, `spell_affect` 128) for Lesser
+/// Healing Wave (8004), not Healing Wave (331); Totem of Rage's (27859: 30, by its `EffectItemType`) for Earth Shock
+/// (8042), not Lightning Bolt (403). None without it.
+unittest
+{
+    import dmangos.world.caster : Caster;
+    import dmangos.world.spelldamage : relicBonus;
+    enum ubyte raceOrc = 2;
+
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto shaman = w.character(18, "Thrall", PlayerClass.shaman, 60, [8004, 331, 8042, 403], raceOrc);
+    auto me = shaman.session.inWorld;
+    auto caster = Caster.of(me);
+    const spells = w.context.data.spells;
+    assert(relicBonus(caster, spells.spell(8004), true) == 0, "none without the relic");
+    bool isNew;
+    foreach (relic; [27855u, 27859u])
+    {
+        const s = spells.spell(relic);
+        me.player.auras.apply(makeAura(s, me.player.guid, 60, -1, true, [s.basePoints[0] + 1, 0, 0]), me.player.values,
+            isNew);
+    }
+    assert(relicBonus(caster, spells.spell(8004), true) == 80, "Lesser Healing Wave: Totem of Life's");
+    assert(relicBonus(caster, spells.spell(331), true) == 0, "not Healing Wave");
+    assert(relicBonus(caster, spells.spell(8042), false) == 30, "Earth Shock: Totem of Rage's");
+    assert(relicBonus(caster, spells.spell(403), false) == 0, "not Lightning Bolt");
+    assert(relicBonus(caster, spells.spell(8042), true) == 0, "and no healing for it");
+}
+
 /// Vampiric Embrace (15286: proc flags 655360, a periodic tick's among them) heals by Shadow Word: Pain's ticks (589).
 unittest
 {
