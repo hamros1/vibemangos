@@ -554,7 +554,7 @@ risk.
 
 | where | what | emulator origin | primary source | risk |
 |---|---|---|---|---|
-| creature.d:setLootRecipient / tappedBy | Tap: first player and group; evade clears tap | SetLootRecipient, IsTappedBy | Wowpedia "Tapping" (verify) | H: every kill |
+| creature.d:setLootRecipient / tappedBy | Tap: first player and group; evade clears tap | SetLootRecipient, IsTappedBy | Wowpedia "Tapping" (verify) | H: every kill. **Matches the source (2026-11-28):** Warcraft Wiki "Tap": "In Classic, only one player may tap a mob by being first to cause damage, but they do so for their entire party"; patch 3.0.8 later made "All player spells which cause a creature to become aggressive" tap too, so before it only damage did (as here: `creatureDamaged`, a pet's for its owner) |
 | loot.d:Loot.fill / LootItem.slotTypeFor | Visibility per loot method (FFA, RR, group, NBG, master) | GetSlotTypeForSharedLoot | Wowpedia "Loot" (verify) | H: every group loot. **Done:** agrees with WoWWiki "Loot"/"Party" (2006) (FORMULAS.md "Group loot") |
 | loothandlers.d:setLootRights | Owners: group in reward distance or on threat list; RR turn; master falls back | SetGroupLootRight | Wowpedia "Loot" (verify) | H: every group kill. **Done:** out-of-range members get no share or roll, as WoWWiki "Party" says; chests keep the group's rules (left, FORMULAS.md "Group loot") |
 | spellhandlers.d:pickPocket | Gold = 10×(rand(0..clvl/2)+rand(0..plvl/2)) copper | pickpocket loot | none found | M |
