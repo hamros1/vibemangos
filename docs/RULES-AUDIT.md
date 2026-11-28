@@ -263,7 +263,7 @@ risk.
 | aurahandlers.d:auraEffects (interrupts) | Food/drink sit; immunities purge mechanics; stun/fear/confuse interrupt cast | RemoveAurasAtMechanicImmunity | SpellCategories.Mechanic/PreventionType | M |
 | aurahandlers.d:selfTick | Creature physical DoT armor-reduced at caster level; leech × multipleValue; HoT threat | Aura::PeriodicTick | Spell.dbc | M |
 | aurahandlers.d:auraTick | Player DoT on creature: physical → armor; partial resist (binary 1/10); no DoT crits | Aura::PeriodicTick | Wowpedia "Resistance" (verify) | M |
-| spellhandlers.d:takeAmmo | One ammo per shot; thrown weapons lose durability or stack | Spell::TakeAmmo | none found | M |
+| spellhandlers.d:takeAmmo | One ammo per shot; thrown weapons lose durability or stack | Spell::TakeAmmo | none found | MM. **Checked 2026-11-28 against CMaNGOS** (`Spell::TakeAmmo`): the same (one of the equipped ammo a shot; a stacking thrown weapon one of itself, one that does not stack a point of durability; wands none) |
 | mounting.d (MountRules) | No melee mounted | Unit::CanAttackNow | none found | M |
 | effecthandlers.d:chargeEffect | Charge at spell speed else 27 yd/s; stop at reach | EffectCharge, BASE_CHARGE_SPEED | Spell.dbc Speed | MM. **Checked 2026-11-28 against CMaNGOS** (`EffectCharge`): the same (the spell's speed, else `BASE_CHARGE_SPEED` 27) |
 | effecthandlers.d:leechTick / manaLeechTick | Leech heal = min(dmg,HP)×mult, no SP; mana leech threat 0.5×gain | PeriodicTick LEECH | Spell.dbc EffectMultipleValue | M |
